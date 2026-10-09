@@ -11,6 +11,11 @@ import httpx
 
 from .config import Settings
 from .db import Database, utc_now
+from .relationship import (
+    DEFAULT_RELATIONSHIP_SETTINGS,
+    RelationshipPromptBuilder,
+    RelationshipSettingsConflict,
+)
 
 
 def new_id() -> str:
@@ -28,15 +33,25 @@ class LocalCompanion:
     without granting a model direct access to the database or scheduler.
     """
 
-    def reply(self, content: str, memories: list[dict[str, Any]]) -> str:
+    def reply(
+        self,
+        content: str,
+        memories: list[dict[str, Any]],
+        relationship: dict[str, Any] | None = None,
+    ) -> str:
+        relationship = relationship or DEFAULT_RELATIONSHIP_SETTINGS
+        self_reference = str(relationship.get("self_reference") or "我")
+        nickname = str(relationship.get("user_nickname") or relationship.get("user_display_name") or "").strip()
+        frequency = relationship.get("nickname_frequency", "natural")
+        address = f"，{nickname}" if nickname and frequency in {"natural", "frequent"} else ""
         reference = ""
         if memories:
             reference = " 我记得你之前提过相关的偏好，会把它作为参考。"
         if any(marker in content for marker in ("难过", "焦虑", "累", "压力")):
-            return "听起来这件事让你不太轻松。我们可以先把眼前最需要处理的一小步理出来。" + reference
+            return f"听起来这件事让你不太轻松{address}。{self_reference}会先陪你把眼前最需要处理的一小步理出来。" + reference
         if "?" in content or "？" in content:
-            return "我在认真想这个问题。我的建议是先从最可控的一步开始；你愿意告诉我更在意哪一部分吗？" + reference
-        return "我在。谢谢你愿意和我说这些；我们可以慢慢把它理清楚。" + reference
+            return f"{self_reference}在认真想这个问题{address}。建议先从最可控的一步开始；你愿意告诉我更在意哪一部分吗？" + reference
+        return f"{self_reference}在{address}。谢谢你愿意和{self_reference}说这些；我们可以慢慢把它理清楚。" + reference
 
 
 class OllamaLocalAdapter:
@@ -117,16 +132,22 @@ class OllamaLocalAdapter:
         self._last_status = result
         return result
 
-    def reply(self, content: str, memories: list[dict[str, Any]]) -> tuple[str | None, dict[str, Any]]:
+    def reply(
+        self,
+        content: str,
+        memories: list[dict[str, Any]],
+        relationship: dict[str, Any] | None = None,
+    ) -> tuple[str | None, dict[str, Any]]:
         # The model list changes rarely. Reuse the last successful health result
         # instead of adding a /api/tags round trip before every message.
         status = self.status(refresh=False) if self._last_status is not None else self.status()
         if status["status"] != "ready":
             return None, status
         context = "\n".join(f"- {memory['content']}" for memory in memories[:5])
+        relationship_prompt = RelationshipPromptBuilder().build(relationship or DEFAULT_RELATIONSHIP_SETTINGS)
         prompt = (
-            "你是一个温柔知性、尊重边界的本地 AI 陪伴者。关闭思考展示，用中文在两到四句话内直接回答。"
-            "不要假装自己是真人，也不要建议用户疏远现实支持。"
+            "你是一个尊重边界的本地 AI 陪伴者。关闭思考展示，用中文直接回答。\n"
+            f"{relationship_prompt}"
             f"\n相关本地记忆（可能为空）：\n{context}\n\n用户：{content}\n/no_think"
         )
         try:
@@ -237,6 +258,97 @@ class Repository:
             self.save_idempotent(conn, operation, idempotency_key, result)
         return result
 
+    @staticmethod
+    def _public_relationship(row: dict[str, Any], db: Database) -> dict[str, Any]:
+        return {
+            "companion_name": row["companion_name"],
+            "self_reference": row["self_reference"],
+            "user_display_name": row["user_display_name"],
+            "user_nickname": row["user_nickname"],
+            "nickname_frequency": row["nickname_frequency"],
+            "personality_style": row["personality_style"],
+            "intimacy_level": row["intimacy_level"],
+            "reply_length": row["reply_length"],
+            "question_frequency": row["question_frequency"],
+            "comfort_style": row["comfort_style"],
+            "opening_greeting": row["opening_greeting"],
+            "blocked_terms": db.decode(row["blocked_terms_json"]),
+            "version": int(row["version"]),
+            "updated_at": row["updated_at"],
+        }
+
+    def relationship_settings(self) -> dict[str, Any]:
+        row = self.db.fetchone("SELECT * FROM relationship_settings WHERE singleton = 1")
+        assert row is not None
+        return self._public_relationship(row, self.db)
+
+    def update_relationship_settings(
+        self,
+        changes: dict[str, Any],
+        expected_version: int,
+        idempotency_key: str | None,
+    ) -> dict[str, Any]:
+        operation = "relationship.settings.update"
+        cached = self.idempotent_result(operation, idempotency_key)
+        if cached:
+            return cached
+        allowed = set(DEFAULT_RELATIONSHIP_SETTINGS)
+        fields = {key: value for key, value in changes.items() if key in allowed}
+        if not fields:
+            raise ValueError("no relationship setting updates")
+        storage = {
+            ("blocked_terms_json" if key == "blocked_terms" else key):
+                (self.db.encode(value) if key == "blocked_terms" else value)
+            for key, value in fields.items()
+        }
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT * FROM relationship_settings WHERE singleton = 1").fetchone()
+            if row is None or int(row["version"]) != expected_version:
+                raise RelationshipSettingsConflict("relationship settings changed")
+            assignments = ", ".join(f"{name} = ?" for name in storage)
+            conn.execute(
+                f"UPDATE relationship_settings SET {assignments}, version = version + 1, updated_at = ? WHERE singleton = 1",
+                [*storage.values(), utc_now()],
+            )
+            result = self._public_relationship(
+                dict(conn.execute("SELECT * FROM relationship_settings WHERE singleton = 1").fetchone()), self.db
+            )
+            self.save_idempotent(conn, operation, idempotency_key, result)
+        return result
+
+    def reset_relationship_settings(
+        self,
+        expected_version: int,
+        idempotency_key: str | None,
+    ) -> dict[str, Any]:
+        operation = "relationship.settings.reset"
+        cached = self.idempotent_result(operation, idempotency_key)
+        if cached:
+            return cached
+        defaults = DEFAULT_RELATIONSHIP_SETTINGS
+        with self.db.transaction() as conn:
+            row = conn.execute("SELECT version FROM relationship_settings WHERE singleton = 1").fetchone()
+            if row is None or int(row["version"]) != expected_version:
+                raise RelationshipSettingsConflict("relationship settings changed")
+            conn.execute(
+                """UPDATE relationship_settings SET companion_name = ?, self_reference = ?, user_display_name = ?,
+                   user_nickname = ?, nickname_frequency = ?, personality_style = ?, intimacy_level = ?,
+                   reply_length = ?, question_frequency = ?, comfort_style = ?, opening_greeting = ?,
+                   blocked_terms_json = ?, version = version + 1, updated_at = ? WHERE singleton = 1""",
+                (
+                    defaults["companion_name"], defaults["self_reference"], defaults["user_display_name"],
+                    defaults["user_nickname"], defaults["nickname_frequency"], defaults["personality_style"],
+                    defaults["intimacy_level"], defaults["reply_length"], defaults["question_frequency"],
+                    defaults["comfort_style"], defaults["opening_greeting"], self.db.encode(defaults["blocked_terms"]),
+                    utc_now(),
+                ),
+            )
+            result = self._public_relationship(
+                dict(conn.execute("SELECT * FROM relationship_settings WHERE singleton = 1").fetchone()), self.db
+            )
+            self.save_idempotent(conn, operation, idempotency_key, result)
+        return result
+
     def relevant_memories(self, content: str) -> list[dict[str, Any]]:
         # MVP retrieval: deterministic local word overlap. A vector store can replace this method.
         if self.privacy_controls()["retrieval_paused"]:
@@ -299,8 +411,9 @@ class Repository:
         memories = self.relevant_memories(content)
         cloud_degraded = route != "local"
         now, user_message_id, assistant_message_id = utc_now(), new_id(), new_id()
-        model_reply, model_status = ollama.reply(content, memories)
-        reply = model_reply or companion.reply(content, memories)
+        relationship = self.relationship_settings()
+        model_reply, model_status = ollama.reply(content, memories, relationship)
+        reply = model_reply or companion.reply(content, memories, relationship)
         model_degraded = ollama.enabled and model_reply is None
         source = "ollama-local" if model_reply else ("fallback-local" if cloud_degraded or model_degraded else "local")
         with self.db.transaction() as conn:
@@ -343,6 +456,7 @@ class Repository:
             memory["private_local_only"] = as_bool(memory["private_local_only"])
             memory["source_message_ids"] = self.db.decode(memory["source_message_ids"])
         exported["privacy_controls"] = self.privacy_controls()
+        exported["relationship_settings"] = self.relationship_settings()
         return {"format": "local-ai-mate-export-v1", "exported_at": utc_now(), "data": exported}
 
     def clear_local_data(self, idempotency_key: str | None) -> dict[str, Any]:
@@ -364,7 +478,26 @@ class Repository:
                 "UPDATE privacy_controls SET memory_candidates_paused = 0, retrieval_paused = 0, proactive_interactions_paused = 0, updated_at = ? WHERE singleton = 1",
                 (utc_now(),),
             )
-            result = {"cleared": True, "tables": counts, "privacy_controls_reset": True}
+            defaults = DEFAULT_RELATIONSHIP_SETTINGS
+            conn.execute(
+                """UPDATE relationship_settings SET companion_name = ?, self_reference = ?, user_display_name = ?,
+                   user_nickname = ?, nickname_frequency = ?, personality_style = ?, intimacy_level = ?,
+                   reply_length = ?, question_frequency = ?, comfort_style = ?, opening_greeting = ?,
+                   blocked_terms_json = ?, version = version + 1, updated_at = ? WHERE singleton = 1""",
+                (
+                    defaults["companion_name"], defaults["self_reference"], defaults["user_display_name"],
+                    defaults["user_nickname"], defaults["nickname_frequency"], defaults["personality_style"],
+                    defaults["intimacy_level"], defaults["reply_length"], defaults["question_frequency"],
+                    defaults["comfort_style"], defaults["opening_greeting"], self.db.encode(defaults["blocked_terms"]),
+                    utc_now(),
+                ),
+            )
+            result = {
+                "cleared": True,
+                "tables": counts,
+                "privacy_controls_reset": True,
+                "relationship_settings_reset": True,
+            }
             # Do not save an idempotency record: it would be retained user data.
         return result
 

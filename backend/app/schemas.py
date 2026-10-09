@@ -118,3 +118,67 @@ class PrivacyClear(RequestModel):
     confirmed: Literal[True]
     confirmation: Literal["清空本地数据"]
     idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+NicknameFrequency = Literal["never", "rare", "natural", "frequent"]
+PersonalityStyle = Literal["gentle-intellectual", "cool-restrained", "bright-playful", "calm-supportive"]
+IntimacyLevel = Literal["restrained", "natural", "close"]
+ReplyLength = Literal["short", "medium", "detailed"]
+QuestionFrequency = Literal["low", "medium", "high"]
+ComfortStyle = Literal["listen-first", "balanced", "advice-first"]
+
+
+def _visible_text(value: str, *, required: bool = False) -> str:
+    normalized = value.strip()
+    if required and not normalized:
+        raise ValueError("must not be blank")
+    if any(ord(char) < 32 or ord(char) == 127 for char in normalized):
+        raise ValueError("must contain visible text only")
+    return normalized
+
+
+class RelationshipSettingsUpdate(RequestModel):
+    companion_name: str | None = Field(default=None, max_length=20)
+    self_reference: str | None = Field(default=None, max_length=12)
+    user_display_name: str | None = Field(default=None, max_length=20)
+    user_nickname: str | None = Field(default=None, max_length=20)
+    nickname_frequency: NicknameFrequency | None = None
+    personality_style: PersonalityStyle | None = None
+    intimacy_level: IntimacyLevel | None = None
+    reply_length: ReplyLength | None = None
+    question_frequency: QuestionFrequency | None = None
+    comfort_style: ComfortStyle | None = None
+    opening_greeting: str | None = Field(default=None, max_length=120)
+    blocked_terms: list[str] | None = Field(default=None, max_length=8)
+    expected_version: int = Field(ge=1)
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+    @field_validator("companion_name", "self_reference")
+    @classmethod
+    def required_visible(cls, value: str | None) -> str | None:
+        return _visible_text(value, required=True) if value is not None else value
+
+    @field_validator("user_display_name", "user_nickname", "opening_greeting")
+    @classmethod
+    def optional_visible(cls, value: str | None) -> str | None:
+        return _visible_text(value) if value is not None else value
+
+    @field_validator("blocked_terms")
+    @classmethod
+    def validate_blocked_terms(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        result: list[str] = []
+        for item in value:
+            normalized = _visible_text(item, required=True)
+            if len(normalized) > 20:
+                raise ValueError("blocked term is too long")
+            if normalized not in result:
+                result.append(normalized)
+        return result
+
+
+class RelationshipSettingsReset(RequestModel):
+    confirmed: Literal[True]
+    expected_version: int = Field(ge=1)
+    idempotency_key: str | None = Field(default=None, max_length=128)

@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from .relationship import DEFAULT_RELATIONSHIP_SETTINGS
+
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
@@ -93,14 +95,48 @@ class Database:
           proactive_interactions_paused INTEGER NOT NULL DEFAULT 0,
           updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS relationship_settings (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          companion_name TEXT NOT NULL,
+          self_reference TEXT NOT NULL,
+          user_display_name TEXT NOT NULL DEFAULT '',
+          user_nickname TEXT NOT NULL DEFAULT '',
+          nickname_frequency TEXT NOT NULL,
+          personality_style TEXT NOT NULL,
+          intimacy_level TEXT NOT NULL,
+          reply_length TEXT NOT NULL,
+          question_frequency TEXT NOT NULL,
+          comfort_style TEXT NOT NULL,
+          opening_greeting TEXT NOT NULL DEFAULT '',
+          blocked_terms_json TEXT NOT NULL DEFAULT '[]',
+          version INTEGER NOT NULL DEFAULT 1,
+          updated_at TEXT NOT NULL
+        );
         """
         with self.transaction() as conn:
             conn.executescript(schema)
             conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)", (1, utc_now()))
+            conn.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)", (2, utc_now()))
             conn.execute(
                 """INSERT OR IGNORE INTO privacy_controls(singleton, memory_candidates_paused, retrieval_paused,
                    proactive_interactions_paused, updated_at) VALUES (1, 0, 0, 0, ?)""",
                 (utc_now(),),
+            )
+            defaults = DEFAULT_RELATIONSHIP_SETTINGS
+            conn.execute(
+                """INSERT OR IGNORE INTO relationship_settings(
+                   singleton, companion_name, self_reference, user_display_name, user_nickname,
+                   nickname_frequency, personality_style, intimacy_level, reply_length,
+                   question_frequency, comfort_style, opening_greeting, blocked_terms_json,
+                   version, updated_at
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+                (
+                    defaults["companion_name"], defaults["self_reference"], defaults["user_display_name"],
+                    defaults["user_nickname"], defaults["nickname_frequency"], defaults["personality_style"],
+                    defaults["intimacy_level"], defaults["reply_length"], defaults["question_frequency"],
+                    defaults["comfort_style"], defaults["opening_greeting"], self.encode(defaults["blocked_terms"]),
+                    utc_now(),
+                ),
             )
 
     @contextmanager

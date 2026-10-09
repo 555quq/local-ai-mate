@@ -30,8 +30,11 @@ from .schemas import (
     MessageCreate,
     PrivacyClear,
     PrivacyControlsUpdate,
+    RelationshipSettingsReset,
+    RelationshipSettingsUpdate,
     TTSSynthesizeRequest,
 )
+from .relationship import RelationshipSettingsConflict
 from .services import LocalCompanion, OllamaLocalAdapter, Repository, new_id
 from .stt import (
     FasterWhisperSTTService,
@@ -408,6 +411,41 @@ def create_app(
         except ValueError as exc:
             raise ApiProblem(422, "SETTINGS_UPDATE_EMPTY", "请至少修改一项隐私控制。") from exc
         return envelope(settings_data(), request.state.request_id)
+
+    @app.get("/api/v1/relationship-settings", dependencies=[Depends(require_session)])
+    def get_relationship_settings(request: Request) -> dict[str, Any]:
+        return envelope(repository.relationship_settings(), request.state.request_id)
+
+    @app.patch("/api/v1/relationship-settings", dependencies=[Depends(write_guard("relationship-settings", 20))])
+    def patch_relationship_settings(payload: RelationshipSettingsUpdate, request: Request) -> dict[str, Any]:
+        changes = payload.model_dump(exclude={"expected_version", "idempotency_key"}, exclude_unset=True, exclude_none=True)
+        try:
+            data = repository.update_relationship_settings(changes, payload.expected_version, payload.idempotency_key)
+        except RelationshipSettingsConflict as exc:
+            raise ApiProblem(
+                409,
+                "RELATIONSHIP_SETTINGS_CONFLICT",
+                "关系设定已在其他页面更新，请刷新后重试。",
+            ) from exc
+        except ValueError as exc:
+            raise ApiProblem(
+                422,
+                "RELATIONSHIP_SETTINGS_UPDATE_EMPTY",
+                "请至少修改一项关系设定。",
+            ) from exc
+        return envelope(data, request.state.request_id)
+
+    @app.post("/api/v1/relationship-settings/reset", dependencies=[Depends(write_guard("relationship-settings", 20))])
+    def reset_relationship_settings(payload: RelationshipSettingsReset, request: Request) -> dict[str, Any]:
+        try:
+            data = repository.reset_relationship_settings(payload.expected_version, payload.idempotency_key)
+        except RelationshipSettingsConflict as exc:
+            raise ApiProblem(
+                409,
+                "RELATIONSHIP_SETTINGS_CONFLICT",
+                "关系设定已在其他页面更新，请刷新后重试。",
+            ) from exc
+        return envelope(data, request.state.request_id)
 
     @app.post("/api/v1/conversations", status_code=201, dependencies=[Depends(write_guard("conversation", 20))])
     def create_conversation(payload: ConversationCreate, request: Request) -> dict[str, Any]:
