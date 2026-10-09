@@ -1,8 +1,8 @@
 # Local AI Mate MVP
 
-这是按 [v1.7.0 设计方案](docs/superpowers/specs/2026-10-08-local-ai-companion-design-v1.7.0.md) 开发，并持续升级到 [v2.0.0 实时流式语音方案](docs/superpowers/specs/2026-10-08-gpt-sovits-realtime-streaming-design-v2.0.0.md) 与 [v2.0.1 中断恢复方案](docs/superpowers/specs/2026-10-09-gpt-sovits-failure-recovery-design-v2.0.1.md) 的本机优先 AI 陪伴原型。
+这是按 [v1.7.0 设计方案](docs/superpowers/specs/2026-10-08-local-ai-companion-design-v1.7.0.md) 开发，并持续升级到 [v2.0.0 实时流式语音方案](docs/superpowers/specs/2026-10-08-gpt-sovits-realtime-streaming-design-v2.0.0.md)、[v2.1.0 本地模型升级方案](docs/superpowers/specs/2026-10-09-local-model-upgrade-design-v2.1.0.md) 与 [v2.2.0 关系设定方案](docs/superpowers/specs/2026-10-09-relationship-settings-design-v2.2.0.md) 的本机优先 AI 陪伴原型。
 
-当前 MVP 提供露娜全屏沉浸式对话界面、Ollama 本地回复、faster-whisper 本地中文转写、GPT-SoVITS 流式克隆音色、Piper 最终回退、记忆候选审核、提醒草案与确认、云端增强的显式一次性同意流程，以及默认零云端出站的验证入口。V3 语音会话采用显式开始/停止的半双工模式；Windows 通知和 SQLCipher 加密尚未接入。当前 SQLite 仅适合开发验证，不能存放真实私密数据。
+当前 MVP 提供全屏沉浸式对话界面、可配置的伴侣身份与回答行为、Ollama 本地回复、SenseVoiceSmall 中文转写、GPT-SoVITS 流式克隆音色、Piper 最终回退、记忆候选审核、提醒草案与确认、云端增强的显式一次性同意流程，以及默认零云端出站的验证入口。V3 语音会话采用显式开始/停止的半双工模式；Windows 通知和 SQLCipher 加密尚未接入。当前 SQLite 仅适合开发验证，不能存放真实私密数据。
 
 ## 本地启动
 
@@ -121,6 +121,14 @@ npm run dev
 打开 Vite 显示的本机地址。开发服务器仅把同源 `/api` 请求转发到回环后端，因此浏览器不会直接跨域访问端口 8765。令牌仅用于浏览器到回环后端的写入请求，绝不能替换为云端 API 密钥或提交到版本库。
 
 对话页使用本地打包的 `frontend/src/assets/luna-background.png`。点击中央光球后才请求麦克风权限；允许后显示“正在聆听”，正常音量说话后显示“正在听你说”，停顿约 0.9 秒自动提交。点击方形停止按钮、切换页面或关闭页面会释放麦克风。左上历史按钮显示透明纯文字历史，`Esc` 可关闭；开启系统“减少动态效果”时背景漂移和光球脉冲会停止。
+
+## 关系设定（v2.2.0）
+
+从侧边栏进入“关系设定”，可以配置伴侣名字、自称、对用户的昵称、昵称频率、性格、亲密程度、回答长度、主动提问频率、安慰方式、开场问候和禁用称呼。页面预览完全由本地模板生成，不会调用 Ollama 或 TTS；点击“保存设置”后，从下一条回复开始生效。
+
+配置保存在 `relationship_settings` SQLite 单例表，通过乐观版本号避免多个页面相互覆盖。字幕、历史面板和朗读按钮会显示当前伴侣名字；历史消息正文不会被改写。隐私导出包含完整关系设定，“清空本地数据”会把它恢复为默认的露娜配置。
+
+关系设定只增加少量 SQLite 数据和不超过 600 字符的结构化提示词，不新增模型、端口、常驻进程或 GPU 占用。因此原有 2 核 2GB 服务器仍可承担静态页面和反向代理入口；Ollama、SenseVoice 与 GPT-SoVITS 继续运行在本机电脑上。
 
 ## 验证
 

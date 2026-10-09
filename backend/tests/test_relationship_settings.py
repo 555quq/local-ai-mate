@@ -105,6 +105,7 @@ class RelationshipApiTestCase(unittest.TestCase):
                 "self_reference": "姐姐",
                 "user_nickname": "阿辰",
                 "nickname_frequency": "frequent",
+                "opening_greeting": "欢迎回来。",
                 "expected_version": version,
                 "idempotency_key": "api-update-1",
             },
@@ -131,6 +132,7 @@ class RelationshipApiTestCase(unittest.TestCase):
         )
         self.assertIn("阿辰", reply.text)
         self.assertIn("姐姐", reply.text)
+        self.assertIn("欢迎回来。", reply.text)
 
         reset = self.client.post(
             "/api/v1/relationship-settings/reset",

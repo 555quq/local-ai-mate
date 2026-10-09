@@ -38,6 +38,8 @@ class LocalCompanion:
         content: str,
         memories: list[dict[str, Any]],
         relationship: dict[str, Any] | None = None,
+        *,
+        first_turn: bool = False,
     ) -> str:
         relationship = relationship or DEFAULT_RELATIONSHIP_SETTINGS
         self_reference = str(relationship.get("self_reference") or "我")
@@ -47,11 +49,13 @@ class LocalCompanion:
         reference = ""
         if memories:
             reference = " 我记得你之前提过相关的偏好，会把它作为参考。"
+        greeting = str(relationship.get("opening_greeting") or "").strip()
+        prefix = f"{greeting} " if first_turn and greeting else ""
         if any(marker in content for marker in ("难过", "焦虑", "累", "压力")):
-            return f"听起来这件事让你不太轻松{address}。{self_reference}会先陪你把眼前最需要处理的一小步理出来。" + reference
+            return prefix + f"听起来这件事让你不太轻松{address}。{self_reference}会先陪你把眼前最需要处理的一小步理出来。" + reference
         if "?" in content or "？" in content:
-            return f"{self_reference}在认真想这个问题{address}。建议先从最可控的一步开始；你愿意告诉我更在意哪一部分吗？" + reference
-        return f"{self_reference}在{address}。谢谢你愿意和{self_reference}说这些；我们可以慢慢把它理清楚。" + reference
+            return prefix + f"{self_reference}在认真想这个问题{address}。建议先从最可控的一步开始；你愿意告诉我更在意哪一部分吗？" + reference
+        return prefix + f"{self_reference}在{address}。谢谢你愿意和{self_reference}说这些；我们可以慢慢把它理清楚。" + reference
 
 
 class OllamaLocalAdapter:
@@ -137,6 +141,8 @@ class OllamaLocalAdapter:
         content: str,
         memories: list[dict[str, Any]],
         relationship: dict[str, Any] | None = None,
+        *,
+        first_turn: bool = False,
     ) -> tuple[str | None, dict[str, Any]]:
         # The model list changes rarely. Reuse the last successful health result
         # instead of adding a /api/tags round trip before every message.
@@ -144,7 +150,10 @@ class OllamaLocalAdapter:
         if status["status"] != "ready":
             return None, status
         context = "\n".join(f"- {memory['content']}" for memory in memories[:5])
-        relationship_prompt = RelationshipPromptBuilder().build(relationship or DEFAULT_RELATIONSHIP_SETTINGS)
+        relationship_prompt = RelationshipPromptBuilder().build(
+            relationship or DEFAULT_RELATIONSHIP_SETTINGS,
+            first_turn=first_turn,
+        )
         prompt = (
             "你是一个尊重边界的本地 AI 陪伴者。关闭思考展示，用中文直接回答。\n"
             f"{relationship_prompt}"
@@ -412,8 +421,9 @@ class Repository:
         cloud_degraded = route != "local"
         now, user_message_id, assistant_message_id = utc_now(), new_id(), new_id()
         relationship = self.relationship_settings()
-        model_reply, model_status = ollama.reply(content, memories, relationship)
-        reply = model_reply or companion.reply(content, memories, relationship)
+        first_turn = not self.messages(conversation_id)
+        model_reply, model_status = ollama.reply(content, memories, relationship, first_turn=first_turn)
+        reply = model_reply or companion.reply(content, memories, relationship, first_turn=first_turn)
         model_degraded = ollama.enabled and model_reply is None
         source = "ollama-local" if model_reply else ("fallback-local" if cloud_degraded or model_degraded else "local")
         with self.db.transaction() as conn:
