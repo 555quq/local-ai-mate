@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Local-only application data and secrets
+LocalAIMate/
+runtime/
+models/
+auditions/
+downloads/
+logs/
+backups/
+*.log
+.env
+.env.*
+!*.example
+
+# User-provided root media; application-owned assets under source folders remain tracked
+/*.mp3
+/*.wav
+/*.png
+
+# Editor and OS artifacts
+.superpowers/
+.DS_Store
+Thumbs.db
+.vscode/

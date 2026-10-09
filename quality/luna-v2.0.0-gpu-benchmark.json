@@ -1,0 +1,234 @@
+{
+  "device": "cuda",
+  "accepted": true,
+  "startup_seconds": 31.172,
+  "peak_gpu_memory_mib": 2807,
+  "gpu_safety_margin_mib": 1289,
+  "runs": [
+    {
+      "repeat": 1,
+      "audition_id": "C1",
+      "text": "你回来了。今天还顺利吗？",
+      "ttff_seconds": 5.579,
+      "total_seconds": 7.036,
+      "audio_seconds": 2.014,
+      "real_time_factor": 3.493,
+      "fragments": [
+        {
+          "bytes": 87084,
+          "sample_rate": 48000,
+          "duration_seconds": 0.907,
+          "sha256": "e72b279eac653a9a44a856ac88f84cacfd6c62976e1704a3e87206e5609f1a5c"
+        },
+        {
+          "bytes": 106284,
+          "sample_rate": 48000,
+          "duration_seconds": 1.107,
+          "sha256": "c0e5eb6f2e9b0399bbeb8fb4c1f7594ce5421ba50247be6b8b56555bb155ba7e"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "audition_id": "C2",
+      "text": "累了就先休息。其他事情，明天再处理。",
+      "ttff_seconds": 1.091,
+      "total_seconds": 3.174,
+      "audio_seconds": 3.501,
+      "real_time_factor": 0.907,
+      "fragments": [
+        {
+          "bytes": 146604,
+          "sample_rate": 48000,
+          "duration_seconds": 1.527,
+          "sha256": "7f27d5b070da1b6ff07806412c4e4e5b3afd46cfe986b5f2c01f3afd07717251"
+        },
+        {
+          "bytes": 90924,
+          "sample_rate": 48000,
+          "duration_seconds": 0.947,
+          "sha256": "092c3b874bdc978b7e6f2d211cfae1663a5a03cd359f68b73cfd83b5a0e7f69e"
+        },
+        {
+          "bytes": 98604,
+          "sample_rate": 48000,
+          "duration_seconds": 1.027,
+          "sha256": "743573ff6687929ead9394036f65e648de0912556f525d22add47e1656499a84"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "audition_id": "C3",
+      "text": "嗯，我在。你慢慢说。",
+      "ttff_seconds": 1.06,
+      "total_seconds": 2.23,
+      "audio_seconds": 2.314,
+      "real_time_factor": 0.964,
+      "fragments": [
+        {
+          "bytes": 138924,
+          "sample_rate": 48000,
+          "duration_seconds": 1.447,
+          "sha256": "4b2a1c02a107ba6d0bcb6139e2b23957beffa4caf0c5d93b17f69fa5b3dead9a"
+        },
+        {
+          "bytes": 83244,
+          "sample_rate": 48000,
+          "duration_seconds": 0.867,
+          "sha256": "153c5740e29920da7f656cebaf8d6e2e2476f22402006a0891d1ceb907cf01e0"
+        }
+      ]
+    },
+    {
+      "repeat": 2,
+      "audition_id": "C1",
+      "text": "你回来了。今天还顺利吗？",
+      "ttff_seconds": 0.763,
+      "total_seconds": 1.885,
+      "audio_seconds": 2.014,
+      "real_time_factor": 0.936,
+      "fragments": [
+        {
+          "bytes": 87084,
+          "sample_rate": 48000,
+          "duration_seconds": 0.907,
+          "sha256": "78e420974ccc695c0a803c3b54d61e687952ddf840935be3a335f7f6b2c8c99e"
+        },
+        {
+          "bytes": 106284,
+          "sample_rate": 48000,
+          "duration_seconds": 1.107,
+          "sha256": "59d2759ae57c53210f39438efb330ceb98beeb6bbd6ac5c6e5150c6ef9037f82"
+        }
+      ]
+    },
+    {
+      "repeat": 2,
+      "audition_id": "C2",
+      "text": "累了就先休息。其他事情，明天再处理。",
+      "ttff_seconds": 0.958,
+      "total_seconds": 2.956,
+      "audio_seconds": 3.501,
+      "real_time_factor": 0.844,
+      "fragments": [
+        {
+          "bytes": 146604,
+          "sample_rate": 48000,
+          "duration_seconds": 1.527,
+          "sha256": "7f27d5b070da1b6ff07806412c4e4e5b3afd46cfe986b5f2c01f3afd07717251"
+        },
+        {
+          "bytes": 90924,
+          "sample_rate": 48000,
+          "duration_seconds": 0.947,
+          "sha256": "092c3b874bdc978b7e6f2d211cfae1663a5a03cd359f68b73cfd83b5a0e7f69e"
+        },
+        {
+          "bytes": 98604,
+          "sample_rate": 48000,
+          "duration_seconds": 1.027,
+          "sha256": "743573ff6687929ead9394036f65e648de0912556f525d22add47e1656499a84"
+        }
+      ]
+    },
+    {
+      "repeat": 2,
+      "audition_id": "C3",
+      "text": "嗯，我在。你慢慢说。",
+      "ttff_seconds": 0.981,
+      "total_seconds": 1.967,
+      "audio_seconds": 2.314,
+      "real_time_factor": 0.85,
+      "fragments": [
+        {
+          "bytes": 138924,
+          "sample_rate": 48000,
+          "duration_seconds": 1.447,
+          "sha256": "4b2a1c02a107ba6d0bcb6139e2b23957beffa4caf0c5d93b17f69fa5b3dead9a"
+        },
+        {
+          "bytes": 83244,
+          "sample_rate": 48000,
+          "duration_seconds": 0.867,
+          "sha256": "153c5740e29920da7f656cebaf8d6e2e2476f22402006a0891d1ceb907cf01e0"
+        }
+      ]
+    },
+    {
+      "repeat": 3,
+      "audition_id": "C1",
+      "text": "你回来了。今天还顺利吗？",
+      "ttff_seconds": 0.732,
+      "total_seconds": 1.805,
+      "audio_seconds": 2.014,
+      "real_time_factor": 0.896,
+      "fragments": [
+        {
+          "bytes": 87084,
+          "sample_rate": 48000,
+          "duration_seconds": 0.907,
+          "sha256": "78e420974ccc695c0a803c3b54d61e687952ddf840935be3a335f7f6b2c8c99e"
+        },
+        {
+          "bytes": 106284,
+          "sample_rate": 48000,
+          "duration_seconds": 1.107,
+          "sha256": "59d2759ae57c53210f39438efb330ceb98beeb6bbd6ac5c6e5150c6ef9037f82"
+        }
+      ]
+    },
+    {
+      "repeat": 3,
+      "audition_id": "C2",
+      "text": "累了就先休息。其他事情，明天再处理。",
+      "ttff_seconds": 0.973,
+      "total_seconds": 2.898,
+      "audio_seconds": 3.501,
+      "real_time_factor": 0.828,
+      "fragments": [
+        {
+          "bytes": 146604,
+          "sample_rate": 48000,
+          "duration_seconds": 1.527,
+          "sha256": "7f27d5b070da1b6ff07806412c4e4e5b3afd46cfe986b5f2c01f3afd07717251"
+        },
+        {
+          "bytes": 90924,
+          "sample_rate": 48000,
+          "duration_seconds": 0.947,
+          "sha256": "092c3b874bdc978b7e6f2d211cfae1663a5a03cd359f68b73cfd83b5a0e7f69e"
+        },
+        {
+          "bytes": 98604,
+          "sample_rate": 48000,
+          "duration_seconds": 1.027,
+          "sha256": "743573ff6687929ead9394036f65e648de0912556f525d22add47e1656499a84"
+        }
+      ]
+    },
+    {
+      "repeat": 3,
+      "audition_id": "C3",
+      "text": "嗯，我在。你慢慢说。",
+      "ttff_seconds": 0.993,
+      "total_seconds": 2.013,
+      "audio_seconds": 2.314,
+      "real_time_factor": 0.87,
+      "fragments": [
+        {
+          "bytes": 138924,
+          "sample_rate": 48000,
+          "duration_seconds": 1.447,
+          "sha256": "4b2a1c02a107ba6d0bcb6139e2b23957beffa4caf0c5d93b17f69fa5b3dead9a"
+        },
+        {
+          "bytes": 83244,
+          "sample_rate": 48000,
+          "duration_seconds": 0.867,
+          "sha256": "153c5740e29920da7f656cebaf8d6e2e2476f22402006a0891d1ceb907cf01e0"
+        }
+      ]
+    }
+  ]
+}
