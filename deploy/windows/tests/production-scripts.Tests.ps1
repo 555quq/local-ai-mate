@@ -23,6 +23,7 @@ Describe 'Local AI Mate production lifecycle scripts' {
         $start | Should Match 'BatchMode=yes'
         $start | Should Match 'StrictHostKeyChecking=yes'
         $start | Should Match 'UserKnownHostsFile'
+        $start | Should Match 'KexAlgorithms=curve25519-sha256'
         $start | Should Match 'ExitOnForwardFailure=yes'
         $start | Should Match 'ServerAliveInterval=30'
         $start | Should Match 'ServerAliveCountMax=3'

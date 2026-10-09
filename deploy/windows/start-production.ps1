@@ -107,6 +107,7 @@ if ($Component -in @('All', 'Tunnel')) {
         '-o BatchMode=yes',
         '-o StrictHostKeyChecking=yes',
         "-o UserKnownHostsFile=`"$KnownHosts`"",
+        '-o KexAlgorithms=curve25519-sha256',
         '-o ExitOnForwardFailure=yes',
         '-o ServerAliveInterval=30',
         '-o ServerAliveCountMax=3',
