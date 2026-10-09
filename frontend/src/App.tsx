@@ -15,6 +15,8 @@ const navigation: Array<{ id: Page; label: string }> = [
   { id: 'chat', label: '对话' }, { id: 'today', label: '今日' }, { id: 'memory', label: '记忆' }, { id: 'relationship', label: '关系设定' }, { id: 'privacy', label: '隐私与云端' },
 ]
 
+export const OFFLINE_MESSAGE = '本地 AI 主机暂时离线。文字界面仍可打开，恢复本机服务后即可继续对话。'
+
 export default function App() {
   const [page, setPage] = useState<Page>('chat')
   const [conversation, setConversation] = useState<Conversation | null>(null)
@@ -31,7 +33,7 @@ export default function App() {
 
   useEffect(() => {
     void (async () => {
-      try { setHealth(await api.health()) } catch { setError('无法连接到本地服务。请确认后端正在 `127.0.0.1` 上运行。') }
+      try { setHealth(await api.health()) } catch { setError(OFFLINE_MESSAGE) }
       try { const created = await api.createConversation(); setConversation({ ...created, messages: [] }) } catch { /* health message above is sufficient */ }
       try { setRelationshipSettings(await api.getRelationshipSettings()) } catch { /* safe defaults keep chat usable */ }
     })()
