@@ -11,24 +11,38 @@ $RuntimeRoot = Join-Path $ProjectRoot 'runtime\deployment'
 $SecretsPath = Join-Path $RuntimeRoot 'secrets.psd1'
 $PidRoot = Join-Path $RuntimeRoot 'pids'
 $LogRoot = Join-Path $RuntimeRoot 'logs'
-$FrpcConfig = Join-Path $RuntimeRoot 'frpc.toml'
+$SshRoot = Join-Path $RuntimeRoot 'ssh'
+$PrivateKey = Join-Path $SshRoot 'id_ed25519'
+$KnownHosts = Join-Path $SshRoot 'known_hosts'
 
 if (-not (Test-Path -LiteralPath $SecretsPath -PathType Leaf)) {
     throw "Deployment secrets file is missing: $SecretsPath"
 }
 $secrets = Import-PowerShellDataFile -LiteralPath $SecretsPath
-foreach ($key in 'Domain', 'SessionToken', 'FrpToken', 'ServerAddress') {
+foreach ($key in 'Domain', 'SessionToken') {
     if (-not $secrets[$key]) { throw "Deployment secret '$key' is missing." }
+}
+if ($Component -in @('All', 'Tunnel')) {
+    foreach ($key in 'ServerAddress', 'SshUser', 'SshPort') {
+        if (-not $secrets[$key]) { throw "Deployment SSH setting '$key' is missing." }
+    }
+    if ([int]$secrets.SshPort -lt 1 -or [int]$secrets.SshPort -gt 65535) {
+        throw 'SshPort must be between 1 and 65535.'
+    }
+    if (-not (Test-Path -LiteralPath $PrivateKey -PathType Leaf)) { throw "SSH private key is missing: $PrivateKey" }
+    if (-not (Test-Path -LiteralPath $KnownHosts -PathType Leaf)) { throw "Pinned SSH known_hosts file is missing: $KnownHosts" }
 }
 
 New-Item -ItemType Directory -Path $PidRoot, $LogRoot -Force | Out-Null
 
-function Get-OwnedProcess([string]$PidFile, [string]$Marker) {
+function Get-OwnedProcess([string]$PidFile, [string[]]$Markers) {
     if (-not (Test-Path -LiteralPath $PidFile -PathType Leaf)) { return $null }
     $storedPid = (Get-Content -LiteralPath $PidFile -Raw).Trim()
     if ($storedPid -notmatch '^\d+$') { Remove-Item -LiteralPath $PidFile -Force; return $null }
     $record = Get-CimInstance Win32_Process -Filter "ProcessId = $storedPid" -ErrorAction SilentlyContinue
-    if ($record -and $record.CommandLine -and $record.CommandLine.Contains($Marker)) {
+    $matches = $record -and $record.CommandLine
+    foreach ($marker in $Markers) { $matches = $matches -and $record.CommandLine.Contains($marker) }
+    if ($matches) {
         return Get-Process -Id ([int]$storedPid) -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath $PidFile -Force
@@ -40,11 +54,11 @@ function Start-OwnedProcess(
     [string]$Executable,
     [string]$Arguments,
     [string]$WorkingDirectory,
-    [string]$Marker,
+    [string[]]$Markers,
     [hashtable]$Environment
 ) {
     $pidFile = Join-Path $PidRoot "$Name.pid"
-    $existing = Get-OwnedProcess $pidFile $Marker
+    $existing = Get-OwnedProcess $pidFile $Markers
     if ($existing) {
         Write-Host "$Name is already running with PID $($existing.Id)."
         return $existing
@@ -81,17 +95,34 @@ if ($Component -in @('All', 'Backend')) {
         LOCAL_AI_MATE_OLLAMA_ENABLED = '1'
         PYTHONUNBUFFERED = '1'
     }
-    $processes += Start-OwnedProcess 'backend' $python '-m uvicorn app.main:app --host 127.0.0.1 --port 8765' $backendDir 'uvicorn app.main:app' $backendEnvironment
+    $processes += Start-OwnedProcess 'backend' $python '-m uvicorn app.main:app --host 127.0.0.1 --port 8765' $backendDir @('uvicorn app.main:app', '--host 127.0.0.1', '--port 8765') $backendEnvironment
 }
 
 if ($Component -in @('All', 'Tunnel')) {
-    & (Join-Path $PSScriptRoot 'render-config.ps1') -SecretsPath $SecretsPath -OutputPath $FrpcConfig
-    $frpc = Join-Path $ProjectRoot 'runtime\frp\frpc.exe'
-    $processes += Start-OwnedProcess 'frpc' $frpc "-c `"$FrpcConfig`"" $ProjectRoot $FrpcConfig @{}
+    $ssh = (Get-Command ssh.exe -ErrorAction Stop).Source
+    $reverseMap = '127.0.0.1:18765:127.0.0.1:8765'
+    $destination = "$($secrets.SshUser)@$($secrets.ServerAddress)"
+    $sshArguments = @(
+        '-NT',
+        '-o BatchMode=yes',
+        '-o StrictHostKeyChecking=yes',
+        "-o UserKnownHostsFile=`"$KnownHosts`"",
+        '-o ExitOnForwardFailure=yes',
+        '-o ServerAliveInterval=30',
+        '-o ServerAliveCountMax=3',
+        "-i `"$PrivateKey`"",
+        "-p $([int]$secrets.SshPort)",
+        "-R $reverseMap",
+        $destination
+    ) -join ' '
+    $processes += Start-OwnedProcess 'ssh-tunnel' $ssh $sshArguments $ProjectRoot @($KnownHosts, $reverseMap, $destination) @{}
 }
 
 if ($Supervise) {
     foreach ($process in $processes) {
         if ($process) { $process.WaitForExit() }
     }
+    # A supervised production component is expected to remain alive. Any exit
+    # asks Task Scheduler to apply its configured restart policy.
+    exit 1
 }
