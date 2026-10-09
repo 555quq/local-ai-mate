@@ -1,0 +1,10 @@
+Match User luna-tunnel
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    AuthenticationMethods publickey
+    AllowTcpForwarding remote
+    GatewayPorts no
+    PermitTTY no
+    X11Forwarding no
+    AllowAgentForwarding no
+    PermitUserRC no

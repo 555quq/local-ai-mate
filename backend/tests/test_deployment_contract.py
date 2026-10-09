@@ -33,29 +33,38 @@ def test_https_template_has_required_browser_security_headers() -> None:
     assert "return 301 https://$host$request_uri;" in config
 
 
-def test_frp_templates_keep_application_port_private() -> None:
-    server = read("deploy/server/frps.toml.template")
-    client = read("deploy/windows/frpc.toml.template")
-    assert 'proxyBindAddr = "127.0.0.1"' in server
-    assert "transport.tls.force = true" in server
-    assert "{ single = 18765 }" in server
-    assert 'auth.token = "__FRP_TOKEN__"' in server
-    assert "transport.tls.enable = true" in client
-    assert 'localIP = "127.0.0.1"' in client
-    assert "localPort = 8765" in client
-    assert "remotePort = 18765" in client
-    assert 'auth.token = "__FRP_TOKEN__"' in client
+def test_ssh_templates_restrict_tunnel_to_loopback_remote_forward() -> None:
+    sshd = read("deploy/server/sshd-luna-tunnel.conf.template")
+    authorized_keys = read("deploy/server/authorized_keys.template")
+    assert "Match User luna-tunnel" in sshd
+    assert "PasswordAuthentication no" in sshd
+    assert "KbdInteractiveAuthentication no" in sshd
+    assert "AuthenticationMethods publickey" in sshd
+    assert "AllowTcpForwarding remote" in sshd
+    assert "GatewayPorts no" in sshd
+    assert "PermitTTY no" in sshd
+    assert "AllowAgentForwarding no" in sshd
+    assert "restrict,port-forwarding" in authorized_keys
+    assert 'permitlisten="127.0.0.1:18765"' in authorized_keys
+    assert "__SSH_PUBLIC_KEY__" in authorized_keys
+
+
+def test_frp_deployment_assets_are_removed() -> None:
+    assert not (ROOT / "deploy/server/frps.toml.template").exists()
+    assert not (ROOT / "deploy/server/frps.service").exists()
+    assert not (ROOT / "deploy/windows/frpc.toml.template").exists()
 
 
 def test_tracked_deployment_files_contain_placeholders_not_secrets() -> None:
     paths = [
-        "deploy/server/frps.toml.template",
-        "deploy/windows/frpc.toml.template",
+        "deploy/server/sshd-luna-tunnel.conf.template",
+        "deploy/server/authorized_keys.template",
         "deploy/windows/secrets.psd1.example",
         "frontend/.env.production.example",
     ]
     combined = "\n".join(read(path) for path in paths)
-    assert "__FRP_TOKEN__" in combined
+    assert "__SSH_PUBLIC_KEY__" in combined
     assert "replace-with" in combined
     assert "49.234.57.214" not in combined
     assert "luna.shipmaster.asia" in combined
+    assert "FrpToken" not in combined
