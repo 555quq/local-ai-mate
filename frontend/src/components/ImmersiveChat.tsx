@@ -25,6 +25,7 @@ export interface ImmersiveChatProps {
   autoRead: boolean
   activeMessageId: string | null
   loadingMessageId: string | null
+  companionName?: string
   onDraftChange: (value: string) => void
   onRouteChange: (route: Route) => void
   onSubmit: () => void
@@ -41,8 +42,8 @@ const phaseLabels: Record<ImmersiveVoicePhase, string> = {
   listening: '正在聆听',
   recording: '正在听你说',
   transcribing: '正在本地转写',
-  thinking: '露娜正在思考',
-  speaking: '露娜正在说话',
+  thinking: '正在思考',
+  speaking: '正在说话',
   error: '语音暂不可用',
 }
 
@@ -61,6 +62,7 @@ export function ImmersiveChat(props: ImmersiveChatProps) {
     onRouteChange, onSubmit, onNavigate, onStartVoice, onStopVoice,
     onAutoReadChange, onPlayMessage,
   } = props
+  const companionName = props.companionName?.trim() || '露娜'
   const [historyOpen, setHistoryOpen] = useState(false)
   const historyButtonRef = useRef<HTMLButtonElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
@@ -89,11 +91,13 @@ export function ImmersiveChat(props: ImmersiveChatProps) {
   }
 
   const conversationReady = Boolean(conversation)
-  const voiceLabel = phaseLabels[voicePhase]
+  const voiceLabel = voicePhase === 'thinking' || voicePhase === 'speaking'
+    ? `${companionName}${phaseLabels[voicePhase]}`
+    : phaseLabels[voicePhase]
   const modelReady = isModelReady(health)
   const ttsReady = health?.tts?.status === 'configured' || health?.tts?.status === 'ready' || health?.tts?.status === 'warming' || health?.tts?.status === 'degraded'
 
-  return <section className="immersive-chat" aria-label="露娜沉浸式对话">
+  return <section className="immersive-chat" aria-label={`${companionName}沉浸式对话`}>
     <img className="immersive-backdrop" src={lunaBackground} alt="" aria-hidden="true" />
     <div className="immersive-highlight" aria-hidden="true" />
 
@@ -122,7 +126,7 @@ export function ImmersiveChat(props: ImmersiveChatProps) {
 
     <div className="immersive-subtitles" aria-label="当前字幕" aria-live="polite" aria-atomic="true">
       {latestUser && <p className="immersive-user-subtitle"><span>你</span>{latestUser.content}</p>}
-      {subtitle && <p className="immersive-assistant-subtitle"><span>露娜</span>{subtitle}</p>}
+      {subtitle && <p className="immersive-assistant-subtitle"><span>{companionName}</span>{subtitle}</p>}
     </div>
 
     <div className="immersive-composer-wrap">
@@ -140,7 +144,7 @@ export function ImmersiveChat(props: ImmersiveChatProps) {
               onSubmit()
             }
           }}
-          placeholder={conversationReady ? '想和露娜说点什么？' : '正在准备本地会话…'}
+          placeholder={conversationReady ? `想和${companionName}说点什么？` : '正在准备本地会话…'}
           aria-label="消息内容"
         />
         <label className="immersive-route"><span className="sr-only">回答方式</span><select aria-label="回答方式" value={route} onChange={(event) => onRouteChange(event.target.value as Route)} disabled={sending}>
@@ -150,7 +154,7 @@ export function ImmersiveChat(props: ImmersiveChatProps) {
         </select></label>
         <button className="immersive-send" type="button" aria-label="发送消息" title="发送消息" disabled={sending || !draft.trim() || !conversationReady} onClick={onSubmit}><Icon name="send" /></button>
       </div>
-      <label className="immersive-auto-read"><input type="checkbox" checked={autoRead} onChange={(event) => onAutoReadChange(event.target.checked)} /><span aria-hidden="true" />自动朗读露娜的回复</label>
+      <label className="immersive-auto-read"><input type="checkbox" checked={autoRead} onChange={(event) => onAutoReadChange(event.target.checked)} /><span aria-hidden="true" />自动朗读{companionName}的回复</label>
     </div>
 
     {historyOpen && <div className="immersive-history-layer" data-testid="history-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeHistory() }}>
@@ -160,9 +164,9 @@ export function ImmersiveChat(props: ImmersiveChatProps) {
           {!conversation && <p className="immersive-history-empty">正在准备本地会话…</p>}
           {conversation && messages.length === 0 && <p className="immersive-history-empty">还没有消息。说点什么吧。</p>}
           {messages.map((message) => <article className={`immersive-history-message immersive-history-message--${message.role}`} key={message.id}>
-            <div className="immersive-history-meta"><span>{message.role === 'assistant' ? '露娜' : '你'}</span><span>{message.route === 'local' ? '本地' : '云端增强'}</span>{message.status !== 'completed' && <span>{statusLabel(message.status)}</span>}</div>
+            <div className="immersive-history-meta"><span>{message.role === 'assistant' ? companionName : '你'}</span><span>{message.route === 'local' ? '本地' : '云端增强'}</span>{message.status !== 'completed' && <span>{statusLabel(message.status)}</span>}</div>
             <p>{message.content}</p>
-            {message.role === 'assistant' && <button className="immersive-history-play" type="button" aria-label={`${activeMessageId === message.id ? '停止朗读' : '朗读'}露娜的这条回复`} aria-pressed={activeMessageId === message.id} disabled={loadingMessageId !== null && loadingMessageId !== message.id} onClick={() => onPlayMessage(message)}><Icon name={activeMessageId === message.id ? 'stop' : 'play'} />{activeMessageId === message.id ? '停止' : loadingMessageId === message.id ? '准备中' : '朗读'}</button>}
+            {message.role === 'assistant' && <button className="immersive-history-play" type="button" aria-label={`${activeMessageId === message.id ? '停止朗读' : '朗读'}${companionName}的这条回复`} aria-pressed={activeMessageId === message.id} disabled={loadingMessageId !== null && loadingMessageId !== message.id} onClick={() => onPlayMessage(message)}><Icon name={activeMessageId === message.id ? 'stop' : 'play'} />{activeMessageId === message.id ? '停止' : loadingMessageId === message.id ? '准备中' : '朗读'}</button>}
           </article>)}
         </div>
       </aside>

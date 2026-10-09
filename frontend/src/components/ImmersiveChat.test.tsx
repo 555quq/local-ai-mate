@@ -74,6 +74,17 @@ describe('ImmersiveChat', () => {
     expect(subtitles.textContent).toContain('露娜辛苦了，先慢慢呼吸一下。')
   })
 
+  it('uses the configured companion name without rewriting message content', () => {
+    renderChat({ companionName: '月影' })
+    expect(screen.getByRole('region', { name: '月影沉浸式对话' })).toBeTruthy()
+    expect(screen.getByLabelText('当前字幕').textContent).toContain('月影辛苦了，先慢慢呼吸一下。')
+    expect(screen.getByPlaceholderText('想和月影说点什么？')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '打开对话历史' }))
+    const history = screen.getByRole('dialog', { name: '对话历史' })
+    expect(history.textContent).toContain('月影')
+    expect(history.textContent).toContain('辛苦了，先慢慢呼吸一下。')
+  })
+
   it('shows the stop action only while a V3 voice session is active', () => {
     const { rerender, props } = renderChat()
     expect(screen.queryByRole('button', { name: '停止连续语音会话' })).toBeNull()

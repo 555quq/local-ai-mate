@@ -73,3 +73,31 @@ describe('streamSpeech', () => {
     )
   })
 })
+
+describe('relationship settings API', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('sends optimistic version data for update and reset', async () => {
+    const saved = {
+      companion_name: '月影', self_reference: '我', user_display_name: '', user_nickname: '',
+      nickname_frequency: 'natural', personality_style: 'gentle-intellectual', intimacy_level: 'natural',
+      reply_length: 'medium', question_frequency: 'medium', comfort_style: 'balanced', opening_greeting: '',
+      blocked_terms: [], version: 2, updated_at: '2026-10-09T00:00:00Z',
+    }
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(
+      JSON.stringify({ request_id: 'r1', server_time: 'now', data: saved }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    await api.updateRelationshipSettings({ companion_name: '月影' }, 1)
+    await api.resetRelationshipSettings(2)
+    const update = fetchMock.mock.calls[0] as [string, RequestInit]
+    const reset = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(update[0]).toContain('/relationship-settings')
+    expect(update[1].method).toBe('PATCH')
+    expect(JSON.parse(String(update[1].body))).toMatchObject({ companion_name: '月影', expected_version: 1 })
+    expect(reset[0]).toContain('/relationship-settings/reset')
+    expect(reset[1].method).toBe('POST')
+    expect(JSON.parse(String(reset[1].body))).toMatchObject({ confirmed: true, expected_version: 2 })
+  })
+})

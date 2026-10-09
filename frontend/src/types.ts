@@ -60,6 +60,47 @@ export interface LocalSettingsResponse {
   cloud_outbound_enabled: boolean
 }
 
+export type NicknameFrequency = 'never' | 'rare' | 'natural' | 'frequent'
+export type PersonalityStyle = 'gentle-intellectual' | 'cool-restrained' | 'bright-playful' | 'calm-supportive'
+export type IntimacyLevel = 'restrained' | 'natural' | 'close'
+export type ReplyLength = 'short' | 'medium' | 'detailed'
+export type QuestionFrequency = 'low' | 'medium' | 'high'
+export type ComfortStyle = 'listen-first' | 'balanced' | 'advice-first'
+
+export interface RelationshipSettings {
+  companion_name: string
+  self_reference: string
+  user_display_name: string
+  user_nickname: string
+  nickname_frequency: NicknameFrequency
+  personality_style: PersonalityStyle
+  intimacy_level: IntimacyLevel
+  reply_length: ReplyLength
+  question_frequency: QuestionFrequency
+  comfort_style: ComfortStyle
+  opening_greeting: string
+  blocked_terms: string[]
+  version: number
+  updated_at: string
+}
+
+export const DEFAULT_RELATIONSHIP_SETTINGS: RelationshipSettings = {
+  companion_name: '露娜',
+  self_reference: '我',
+  user_display_name: '',
+  user_nickname: '',
+  nickname_frequency: 'natural',
+  personality_style: 'gentle-intellectual',
+  intimacy_level: 'natural',
+  reply_length: 'medium',
+  question_frequency: 'medium',
+  comfort_style: 'balanced',
+  opening_greeting: '',
+  blocked_terms: [],
+  version: 1,
+  updated_at: '',
+}
+
 export interface HealthState {
   database: string
   model: string | OllamaStatus

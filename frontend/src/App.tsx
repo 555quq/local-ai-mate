@@ -4,11 +4,12 @@ import { CloudConsentDialog } from './components/CloudConsentDialog'
 import { ImmersiveChat } from './components/ImmersiveChat'
 import { MemoryReview } from './components/MemoryReview'
 import { PrivacyControls } from './components/PrivacyControls'
+import { RelationshipSettingsPage } from './components/RelationshipSettings'
 import { StatusBar } from './components/StatusBar'
 import { TodayPage } from './components/TodayPage'
 import { useSpeechPlayback } from './hooks/useSpeechPlayback'
 import { useVoiceSession } from './hooks/useVoiceSession'
-import type { CloudPreview, Conversation, HealthState, Page, Route } from './types'
+import { DEFAULT_RELATIONSHIP_SETTINGS, type CloudPreview, type Conversation, type HealthState, type Page, type RelationshipSettings, type Route } from './types'
 
 const navigation: Array<{ id: Page; label: string }> = [
   { id: 'chat', label: '对话' }, { id: 'today', label: '今日' }, { id: 'memory', label: '记忆' }, { id: 'relationship', label: '关系设定' }, { id: 'privacy', label: '隐私与云端' },
@@ -25,12 +26,14 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [health, setHealth] = useState<HealthState | null>(null)
+  const [relationshipSettings, setRelationshipSettings] = useState<RelationshipSettings>(DEFAULT_RELATIONSHIP_SETTINGS)
   const speech = useSpeechPlayback()
 
   useEffect(() => {
     void (async () => {
       try { setHealth(await api.health()) } catch { setError('无法连接到本地服务。请确认后端正在 `127.0.0.1` 上运行。') }
       try { const created = await api.createConversation(); setConversation({ ...created, messages: [] }) } catch { /* health message above is sufficient */ }
+      try { setRelationshipSettings(await api.getRelationshipSettings()) } catch { /* safe defaults keep chat usable */ }
     })()
   }, [])
 
@@ -140,6 +143,7 @@ export default function App() {
       autoRead={speech.autoRead}
       activeMessageId={speech.activeMessageId}
       loadingMessageId={speech.loadingMessageId}
+      companionName={relationshipSettings.companion_name}
       onDraftChange={setDraft}
       onRouteChange={setRoute}
       onSubmit={() => void beginSend()}
@@ -156,7 +160,7 @@ export default function App() {
         {page === 'memory' && <MemoryReview conversationId={conversation?.id} />}
         {page === 'privacy' && <PrivacyControls />}
         {page === 'today' && <TodayPage conversationId={conversation?.id} />}
-        {page === 'relationship' && <Placeholder title="关系设定" body="温柔知性型人格已启用。称呼、说话长度、互动频率与禁忌话题会在本机设置中开放。" />}
+        {page === 'relationship' && <RelationshipSettingsPage settings={relationshipSettings} onSaved={setRelationshipSettings} />}
       </main>
     </div>
 
@@ -170,10 +174,6 @@ export default function App() {
       onApprove={() => void submitContent(draft, route, preview ?? undefined)}
     />}
   </>
-}
-
-function Placeholder({ title, body }: { title: string; body: string }) {
-  return <section className="page-content"><div className="page-heading"><div><p className="eyebrow">本地控制台</p><h1>{title}</h1></div></div><div className="empty-state"><h2>首版界面已预留</h2><p>{body}</p></div></section>
 }
 
 function messageFor(error: unknown) {

@@ -1,4 +1,4 @@
-import type { CloudPreview, Conversation, HealthState, LocalSettingsResponse, MemoryCandidate, PrivacySettings, Reminder, ReminderProposal, Route, SpeechTranscript } from '../types'
+import type { CloudPreview, Conversation, HealthState, LocalSettingsResponse, MemoryCandidate, PrivacySettings, RelationshipSettings, Reminder, ReminderProposal, Route, SpeechTranscript } from '../types'
 
 const BASE_URL = (import.meta.env.VITE_API_BASE ?? '/api/v1').replace(/\/$/, '')
 const SESSION_TOKEN = import.meta.env.VITE_SESSION_TOKEN
@@ -224,6 +224,18 @@ export const api = {
     const result = await optionalRequest<LocalSettingsResponse>('/settings', { method: 'PATCH', body: JSON.stringify({ ...settings, idempotency_key: uuid() }) })
     return result?.privacy
   },
+  getRelationshipSettings: () => request<RelationshipSettings>('/relationship-settings'),
+  updateRelationshipSettings: (
+    settings: Partial<Omit<RelationshipSettings, 'version' | 'updated_at'>>,
+    expectedVersion: number,
+  ) => request<RelationshipSettings>('/relationship-settings', {
+    method: 'PATCH',
+    body: JSON.stringify({ ...settings, expected_version: expectedVersion, idempotency_key: uuid() }),
+  }),
+  resetRelationshipSettings: (expectedVersion: number) => request<RelationshipSettings>('/relationship-settings/reset', {
+    method: 'POST',
+    body: JSON.stringify({ confirmed: true, expected_version: expectedVersion, idempotency_key: uuid() }),
+  }),
   exportPrivacyData: () => optionalRequest<unknown>('/privacy/export'),
   clearPrivacyData: () => optionalRequest<void>('/privacy/clear', { method: 'POST', body: JSON.stringify({ confirmation: '清空本地数据', confirmed: true, idempotency_key: uuid() }) }),
 }

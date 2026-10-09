@@ -117,3 +117,21 @@
   .immersive-backdrop { transform: scale(1.01); }
   .immersive-icon-button, .immersive-orb, .immersive-auto-read > span, .immersive-auto-read > span::after { transition: none !important; }
 }
+
+/* Relationship settings */
+.relationship-page { max-width: 1120px; }
+.relationship-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.relationship-grid .settings-group { margin-top: 0; background: rgba(255,255,255,.86); backdrop-filter: blur(12px); }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.field-grid.single { grid-template-columns: 1fr; }
+.relationship-field { position: relative; display: grid; gap: 6px; color: #504e5c; font-size: 13px; font-weight: 650; }
+.relationship-field input, .relationship-field select, .relationship-field textarea { width: 100%; min-width: 0; border: 1px solid #d8d5e0; border-radius: 9px; padding: 10px 11px; color: #292738; background: rgba(255,255,255,.94); font: inherit; font-weight: 450; }
+.relationship-field textarea { resize: vertical; line-height: 1.5; }
+.relationship-field small { justify-self: end; color: #898593; font-size: 10px; font-weight: 450; }
+.relationship-preview { min-height: 174px; background: linear-gradient(145deg, rgba(247,243,255,.95), rgba(255,249,245,.91)) !important; }
+.relationship-preview p { margin: 20px 0 12px; color: #4e3f61; font-size: 18px; line-height: 1.65; }
+.relationship-preview small { color: #777180; }
+.relationship-actions { position: sticky; bottom: 14px; z-index: 2; display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 18px; padding: 13px 15px; border: 1px solid rgba(216,211,226,.9); border-radius: 13px; background: rgba(255,255,255,.9); box-shadow: 0 10px 32px rgba(48,41,63,.1); backdrop-filter: blur(14px); }
+.relationship-actions > div { display: grid; gap: 2px; margin-right: auto; color: #4d4858; font-size: 13px; }
+.relationship-actions small { color: #898593; font-size: 10px; }
+@media (max-width: 850px) { .relationship-grid, .field-grid { grid-template-columns: 1fr; } .relationship-actions { flex-wrap: wrap; } .relationship-actions > div { flex-basis: 100%; } }
