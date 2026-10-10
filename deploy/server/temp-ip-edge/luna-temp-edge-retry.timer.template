@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry failed cleanup of the Luna temporary public IP edge
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+AccuracySec=5s
+Unit=luna-temp-edge-expiry.service
+
+[Install]
+WantedBy=timers.target

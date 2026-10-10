@@ -111,6 +111,7 @@ def test_systemd_units_validate_and_run_the_isolated_edge() -> None:
     expiry = read("luna-temp-edge-expiry.service.template")
     timer = read("luna-temp-edge-expiry.timer.template")
     failsafe = read("luna-temp-edge-failsafe.timer.template")
+    retry = read("luna-temp-edge-retry.timer.template")
 
     command = (
         "__NGINX_BINARY__ -p /var/lib/luna-temp-edge/nginx/ "
@@ -139,6 +140,10 @@ def test_systemd_units_validate_and_run_the_isolated_edge() -> None:
     assert "OnCalendar=__FAILSAFE_AT_UTC__" in failsafe
     assert "Persistent=true" in failsafe
     assert "Unit=luna-temp-edge-expiry.service" in failsafe
+    assert "OnBootSec=1min" in retry
+    assert "OnUnitInactiveSec=1min" in retry
+    assert "Unit=luna-temp-edge-expiry.service" in retry
+    assert "Persistent=" not in retry
 
 
 def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
@@ -159,13 +164,17 @@ def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
     assert "for attempt in 1 2 3" in script
     failsafe_stop_at = script.index("ensure_unit_inactive luna-temp-edge-failsafe.timer")
     expiry_stop_at = script.index("ensure_unit_inactive luna-temp-edge-expiry.timer")
+    retry_stop_at = script.index("ensure_unit_inactive luna-temp-edge-retry.timer")
     assert 'UFW_OWNERSHIP_FILE="${ROOT_PREFIX}/var/lib/luna-temp-edge/ufw-rule-owned"' in script
     ownership_at = script.index('[[ -f "${UFW_OWNERSHIP_FILE}" ]]')
     ufw_delete_at = script.index('"${UFW_BIN}" --force delete allow 8443/tcp')
     assert ownership_at < ufw_delete_at < stop_at
-    failure_gate = script.index('if [[ "${failures}" -ne 0 ]]')
-    assert failure_gate < failsafe_stop_at
-    assert failure_gate < expiry_stop_at
+    firewall_gate = script.index("firewall cleanup failed after edge shutdown")
+    assert ufw_delete_at < stop_at < listen_check_at < firewall_gate < auth_remove_at
+    final_failure_gate = script.index("timers and retry assets retained")
+    assert final_failure_gate < failsafe_stop_at
+    assert final_failure_gate < expiry_stop_at
+    assert final_failure_gate < retry_stop_at
     assert 'status_output="$("${UFW_BIN}" status' in script
     assert "invalid UFW ownership record" in script
 
@@ -185,6 +194,7 @@ def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
     assert "/etc/systemd/system/luna-temp-edge.service" in script
     assert "/etc/systemd/system/luna-temp-edge-expiry.service" in script
     assert "/etc/systemd/system/luna-temp-edge-expiry.timer" in script
+    assert "/etc/systemd/system/luna-temp-edge-retry.timer" in script
     assert "/usr/local/lib/luna-temp-edge/cleanup.sh" in script
     assert "/usr/local/lib/luna-temp-edge/check-expiry.sh" in script
     assert "LUNA_TEMP_EDGE_TEST_ROOT" in script
@@ -196,7 +206,7 @@ def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
     assert not re.search(r"rm\s+-rf\s+(?:--\s+)?\$(?!\{ROOT_PREFIX\})", script)
     assert "systemctl stop --all" not in script
     assert "ufw reset" not in script
-    assert failure_gate < script.index(
+    assert final_failure_gate < script.index(
         'remove_file "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge/cleanup.sh"'
     )
 
@@ -209,6 +219,7 @@ def test_assets_contain_placeholders_and_no_embedded_secrets() -> None:
         "luna-temp-edge-expiry.service.template",
         "luna-temp-edge-expiry.timer.template",
         "luna-temp-edge-failsafe.timer.template",
+        "luna-temp-edge-retry.timer.template",
         "cleanup.sh",
         "check-expiry.sh",
     )

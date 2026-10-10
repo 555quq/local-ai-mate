@@ -137,6 +137,9 @@ if [[ "$1" == status ]]; then
     exit 0
 fi
 if [[ "$1" == --force && "$2" == delete ]]; then
+    if [[ -f "${MOCK_STATE}/ufw-delete-fail" ]]; then
+        exit 1
+    fi
     rm -f -- "${MOCK_STATE}/ufw-present"
     exit 0
 fi
@@ -177,6 +180,7 @@ printf 'sleep %s\n' "$*" >>"${MOCK_TRACE}"
             "luna-temp-edge-expiry.service",
             "luna-temp-edge-expiry.timer",
             "luna-temp-edge-failsafe.timer",
+            "luna-temp-edge-retry.timer",
         ):
             self.write(f"etc/systemd/system/{unit}")
             self.write(f"mock-state/{unit}.active", "active\n")
@@ -334,7 +338,11 @@ def test_certificate_failure_retains_both_persistent_timers_and_retry_assets(
     result = cleanup_harness.run()
 
     assert result.returncode != 0
-    for timer in ("luna-temp-edge-expiry.timer", "luna-temp-edge-failsafe.timer"):
+    for timer in (
+        "luna-temp-edge-expiry.timer",
+        "luna-temp-edge-failsafe.timer",
+        "luna-temp-edge-retry.timer",
+    ):
         assert cleanup_harness.path(f"etc/systemd/system/{timer}").exists()
         assert cleanup_harness.path(f"mock-state/{timer}.active").read_text(
             encoding="utf-8"
@@ -343,6 +351,13 @@ def test_certificate_failure_retains_both_persistent_timers_and_retry_assets(
             encoding="utf-8"
         ).strip() == "enabled"
     assert cleanup_harness.path("usr/local/lib/luna-temp-edge/cleanup.sh").exists()
+
+
+def assert_edge_was_closed_after_firewall_failure(harness: CleanupHarness) -> None:
+    trace = harness.trace.read_text(encoding="utf-8")
+    assert "systemctl stop luna-temp-edge.service" in trace
+    assert "systemctl disable luna-temp-edge.service" in trace
+    assert trace.count("ss ") == 3
 
 
 def test_ufw_ownership_mismatch_gates_all_destructive_cleanup(
@@ -358,6 +373,7 @@ def test_ufw_ownership_mismatch_gates_all_destructive_cleanup(
     assert cleanup_harness.path("mock-state/ufw-present").exists()
     trace = cleanup_harness.trace.read_text(encoding="utf-8") if cleanup_harness.trace.exists() else ""
     assert "ufw --force delete" not in trace
+    assert_edge_was_closed_after_firewall_failure(cleanup_harness)
 
 
 def test_ufw_status_failure_retains_ownership_and_credentials(
@@ -373,6 +389,52 @@ def test_ufw_status_failure_retains_ownership_and_credentials(
     assert result.returncode != 0
     assert cleanup_harness.path("var/lib/luna-temp-edge/ufw-rule-owned").exists()
     assert cleanup_harness.path("etc/luna-temp-edge/htpasswd").exists()
+    assert_edge_was_closed_after_firewall_failure(cleanup_harness)
+
+
+def test_ufw_delete_failure_still_closes_edge_and_retains_ownership(
+    cleanup_harness: CleanupHarness,
+) -> None:
+    cleanup_harness.write(
+        "var/lib/luna-temp-edge/ufw-rule-owned", "luna-temp-edge-v2.3.2\n"
+    )
+    cleanup_harness.write("mock-state/ufw-present")
+    cleanup_harness.write("mock-state/ufw-delete-fail")
+
+    result = cleanup_harness.run()
+
+    assert result.returncode != 0
+    assert cleanup_harness.path("var/lib/luna-temp-edge/ufw-rule-owned").exists()
+    assert cleanup_harness.path("etc/luna-temp-edge/htpasswd").exists()
+    assert_edge_was_closed_after_firewall_failure(cleanup_harness)
+
+
+def test_retry_timer_survives_failure_and_completes_after_simulated_reboot(
+    cleanup_harness: CleanupHarness,
+) -> None:
+    cleanup_harness.write(
+        "etc/letsencrypt/renewal/luna-temp-ip-49-234-57-214.conf"
+    )
+    cleanup_harness.write(
+        "etc/letsencrypt/live/luna-temp-ip-49-234-57-214/fullchain.pem"
+    )
+    certbot_failure = cleanup_harness.write("mock-state/certbot-fail")
+
+    first = cleanup_harness.run()
+    assert first.returncode != 0
+    assert cleanup_harness.path(
+        "mock-state/luna-temp-edge-retry.timer.enabled"
+    ).read_text(encoding="utf-8").strip() == "enabled"
+
+    # Simulated reboot: enabled retry timer is active again via OnBootSec and invokes cleanup.
+    cleanup_harness.write("mock-state/luna-temp-edge-retry.timer.active", "active\n")
+    certbot_failure.unlink()
+    second = cleanup_harness.run()
+
+    assert second.returncode == 0, cleanup_harness.diagnostics()
+    assert not cleanup_harness.path(
+        "etc/systemd/system/luna-temp-edge-retry.timer"
+    ).exists()
 
 
 def test_test_root_requires_every_explicit_mock(cleanup_harness: CleanupHarness) -> None:

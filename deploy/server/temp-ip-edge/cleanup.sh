@@ -199,22 +199,22 @@ if [[ -f "${UFW_OWNERSHIP_FILE}" ]]; then
     ownership="$(<"${UFW_OWNERSHIP_FILE}")"
     if [[ "${ownership}" != "${PROJECT_MARKER}" ]]; then
         record "ERROR invalid UFW ownership record"
-        exit 1
-    fi
-    status_output="$("${UFW_BIN}" status 2>/dev/null)"
-    if [[ $? -ne 0 ]]; then
-        record "ERROR unable to inspect the owned UFW rule"
-        exit 1
-    fi
-    if grep -Fq "${PROJECT_MARKER}" <<<"${status_output}"; then
-        if ! "${UFW_BIN}" --force delete allow 8443/tcp comment "${PROJECT_MARKER}" >/dev/null 2>&1; then
-            record "ERROR failed to remove the owned UFW rule"
-            exit 1
+        failures=1
+    else
+        status_output="$("${UFW_BIN}" status 2>/dev/null)"
+        if [[ $? -ne 0 ]]; then
+            record "ERROR unable to inspect the owned UFW rule"
+            failures=1
+        elif grep -Fq "${PROJECT_MARKER}" <<<"${status_output}"; then
+            if ! "${UFW_BIN}" --force delete allow 8443/tcp comment "${PROJECT_MARKER}" >/dev/null 2>&1; then
+                record "ERROR failed to remove the owned UFW rule"
+                failures=1
+            else
+                remove_file "${UFW_OWNERSHIP_FILE}"
+            fi
+        else
+            remove_file "${UFW_OWNERSHIP_FILE}"
         fi
-    fi
-    remove_file "${UFW_OWNERSHIP_FILE}"
-    if [[ "${failures}" -ne 0 ]]; then
-        exit 1
     fi
 fi
 
@@ -230,6 +230,11 @@ fi
 verify_port_closed_three_times
 if [[ $? -ne 0 ]]; then
     printf '%s\n' "Port 8443 shutdown could not be proven" >&2
+    exit 1
+fi
+
+if [[ "${failures}" -ne 0 ]]; then
+    record "firewall cleanup failed after edge shutdown; retry assets retained"
     exit 1
 fi
 
@@ -292,11 +297,20 @@ ensure_unit_disabled luna-temp-edge-expiry.timer
 if [[ $? -ne 0 ]]; then
     exit 1
 fi
+ensure_unit_inactive luna-temp-edge-retry.timer
+if [[ $? -ne 0 ]]; then
+    exit 1
+fi
+ensure_unit_disabled luna-temp-edge-retry.timer
+if [[ $? -ne 0 ]]; then
+    exit 1
+fi
 
 remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge.service"
 remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-expiry.service"
 remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-expiry.timer"
 remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-failsafe.timer"
+remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-retry.timer"
 if [[ "${failures}" -ne 0 ]]; then
     record "cleanup could not remove all units; retry assets retained"
     exit 1
