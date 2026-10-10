@@ -47,6 +47,7 @@
 - Create: `deploy/server/temp-ip-edge/luna-temp-edge-expiry.service.template`
 - Create: `deploy/server/temp-ip-edge/luna-temp-edge-failsafe.timer.template`
 - Create: `deploy/server/temp-ip-edge/luna-temp-edge-expiry.timer.template`
+- Create: `deploy/server/temp-ip-edge/luna-temp-edge-retry.timer.template`
 - Create: `deploy/server/temp-ip-edge/check-expiry.sh`
 - Create: `deploy/server/temp-ip-edge/cleanup.sh`
 - Create: `backend/tests/test_temp_ip_deployment_contract.py`
@@ -70,7 +71,7 @@ Expected: FAIL，原因是临时边缘资产尚不存在。
 
 - [ ] **Step 3: 实现 systemd 单元和固定作用域清理脚本**
 
-边缘服务以前台 `daemon off` 运行，启动前用同一二进制和 prefix 执行配置检查，并调用 `check-expiry.sh` 验证 root-owned、mode 0600、严格 UTC 格式的 `expires-at` 仍在未来。unit 以低权限 Web 用户运行，启用 `ProtectSystem=strict` 等沙箱，只读发布/配置/证书路径，只写固定 runtime/log/temp 路径。expiry service 调用 root-owned 清理脚本并在失败时自动重试；failsafe/expiry timer 分别使用 `OnCalendar=__FAILSAFE_AT_UTC__`、`OnCalendar=__EXPIRES_AT_UTC__` 与 `Persistent=true`。清理脚本先精确撤销本项目 UFW 规则，再严格 stop/disable edge、确认 inactive/disabled 并连续多次检查 `ss -ltn` 无 8443；UFW 状态/所有权异常必须保留证据并在删除秘密前退出。失败时保留至少一个持久 timer 及可重试组件，全部成功后才删临时 htpasswd、唯一 Certbot lineage、固定运行目录与自身 unit；重复运行返回成功。
+边缘服务以前台 `daemon off` 运行，启动前用同一二进制和 prefix 执行配置检查，并调用 `check-expiry.sh` 验证 root-owned、mode 0600、严格 UTC 格式的 `expires-at` 仍在未来。unit 以低权限 Web 用户运行，启用 `ProtectSystem=strict` 等沙箱，只读发布/配置/证书路径，只写固定 runtime/log/temp 路径。expiry service 调用 root-owned 清理脚本并在失败时自动重试；failsafe/expiry timer 分别使用 `OnCalendar=__FAILSAFE_AT_UTC__`、`OnCalendar=__EXPIRES_AT_UTC__` 与 `Persistent=true`；retry timer 使用 `OnBootSec` 与 `OnUnitInactiveSec`，跨重启周期调用同一清理服务。清理脚本先尝试精确撤销本项目 UFW 规则，再无条件严格 stop/disable edge、确认 inactive/disabled 并连续多次检查 `ss -ltn` 无 8443；UFW 状态/所有权异常必须保留证据，但只能在 edge 关闭验证后阻止删除秘密。失败时保留 retry timer 及可重试组件，全部成功后才删临时 htpasswd、唯一 Certbot lineage、固定运行目录与自身 unit；重复运行返回成功。
 
 - [ ] **Step 4: 增加 Review Focus 负向断言并运行测试**
 
@@ -167,6 +168,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 - Remote create: `/etc/systemd/system/luna-temp-edge.service`
 - Remote create: `/etc/systemd/system/luna-temp-edge-expiry.service`
 - Remote create before public binding: `/etc/systemd/system/luna-temp-edge-failsafe.timer`
+- Remote create before public binding: `/etc/systemd/system/luna-temp-edge-retry.timer`
 - Remote create after acceptance: `/etc/systemd/system/luna-temp-edge-expiry.timer`
 - Remote state: `/var/lib/luna-temp-edge/expires-at`
 
@@ -185,7 +187,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 3: 安装边缘和清理 systemd 单元**
 
-运行 `systemd-analyze verify` 检查 service、expiry service 与 failsafe timer；计算当前 UTC 加 4 小时的绝对时间，把它同时写入 `expires-at` 并启用 `luna-temp-edge-failsafe.timer`，确认 NEXT 精确匹配后才启动 loopback edge。若 UFW 已 active，记录前态并添加带注释 `luna-temp-edge-v2.3.2` 的唯一 8443/TCP 规则及其完整 tuple/编号；若 UFW inactive，不启用 UFW。
+运行 `systemd-analyze verify` 检查 service、expiry service、failsafe timer 与 retry timer；计算当前 UTC 加 4 小时的绝对时间，把它同时写入 `expires-at`，启用 failsafe 与 retry timers，并确认触发时间/周期后才启动 loopback edge。若 UFW 已 active，记录前态并添加带注释 `luna-temp-edge-v2.3.2` 的唯一 8443/TCP 规则及其完整 tuple/编号；若 UFW inactive，不启用 UFW。
 
 - [ ] **Step 4: 做服务器内正向与负向测试**
 
@@ -193,7 +195,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 5: 在隔离替代根中验证清理幂等性**
 
-用临时目录和显式 mock 的 systemctl/ss/ufw/sleep/certbot 命令执行两次 `cleanup.sh`；TEST_ROOT 模式缺少任一 mock 时必须拒绝运行，不能回退到宿主真实命令。两次成功目标仅限模拟的 `luna-temp-edge` 文件。分别注入 UFW status 失败、所有权不匹配、stop 失败、服务仍 active、端口间歇重现和证书删除失败，断言前五种情况禁止删除凭据/证书并返回非零；证书删除失败时入口已严格关闭，脚本返回非零并保留持久 timer、unit 和 cleanup 以供重启后继续重试。
+用临时目录和显式 mock 的 systemctl/ss/ufw/sleep/certbot 命令执行两次 `cleanup.sh`；TEST_ROOT 模式缺少任一 mock 时必须拒绝运行，不能回退到宿主真实命令。两次成功目标仅限模拟的 `luna-temp-edge` 文件。分别注入 UFW status 失败、所有权不匹配、stop 失败、服务仍 active、端口间歇重现和证书删除失败；UFW 故障用例必须断言 edge 仍被 stop/disable 且完成端口检查。所有失败均禁止删除凭据/证书并返回非零；证书删除失败时入口已严格关闭，脚本返回非零并保留 retry timer、unit 和 cleanup，模拟重启后仍会再次调用清理。
 
 ### Task 5: 腾讯云防火墙与公网端到端验收
 
@@ -253,7 +255,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 2: 验证并启用 timer**
 
-运行 `systemd-analyze calendar` 与 `systemd-analyze verify`；`systemctl enable --now luna-temp-edge-expiry.timer` 后，`systemctl list-timers` 的 NEXT 必须与记录的 UTC 时间一致。只有确认 72 小时 timer active 且 NEXT 正确后，才禁用并删除 4 小时 failsafe timer。用模拟 timer/替代根测试开机补执行语义，不提前触发真实清理。
+运行 `systemd-analyze calendar` 与 `systemd-analyze verify`；`systemctl enable --now luna-temp-edge-expiry.timer` 后，`systemctl list-timers` 的 NEXT 必须与记录的 UTC 时间一致。只有确认 72 小时 timer active、NEXT 正确且 retry timer active 后，才禁用并删除 4 小时 failsafe timer。用模拟 timer/替代根测试开机补执行和清理失败后跨重启周期重试语义，不提前触发真实清理。
 
 - [ ] **Step 3: 完成安全与秘密扫描**
 
