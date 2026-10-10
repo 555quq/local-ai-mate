@@ -4,6 +4,7 @@ After=luna-temp-edge.service
 
 [Service]
 Type=oneshot
+ExecCondition=/usr/local/lib/luna-temp-edge/cleanup-due.sh
 ExecStart=/usr/local/lib/luna-temp-edge/cleanup.sh
 Restart=on-failure
 RestartSec=30s

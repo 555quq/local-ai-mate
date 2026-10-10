@@ -98,6 +98,9 @@ case "${command_name}" in
         if [[ "${unit}" == luna-temp-edge.service && -f "${MOCK_STATE}/stop-fail" ]]; then
             exit 1
         fi
+        if [[ "${unit}" == luna-temp-edge-retry.timer && -f "${MOCK_STATE}/timer-stop-fail" ]]; then
+            exit 1
+        fi
         printf '%s\n' inactive >"${MOCK_STATE}/${unit}.active"
         ;;
     is-enabled)
@@ -108,7 +111,12 @@ case "${command_name}" in
     disable)
         printf '%s\n' disabled >"${MOCK_STATE}/${unit}.enabled"
         ;;
-    daemon-reload|reset-failed) ;;
+    daemon-reload)
+        if [[ -f "${MOCK_STATE}/daemon-reload-fail" ]]; then
+            exit 1
+        fi
+        ;;
+    reset-failed) ;;
     *) exit 2 ;;
 esac
 '''
@@ -201,6 +209,10 @@ printf 'sleep %s\n' "$*" >>"${MOCK_TRACE}"
             "usr/local/lib/luna-temp-edge/check-expiry.sh",
             (ASSET_ROOT / "check-expiry.sh").read_text(encoding="utf-8"),
         )
+        self.write(
+            "usr/local/lib/luna-temp-edge/cleanup-due.sh",
+            (ASSET_ROOT / "cleanup-due.sh").read_text(encoding="utf-8"),
+        )
 
     def env(self) -> dict[str, str]:
         values = os.environ.copy()
@@ -240,6 +252,26 @@ printf 'sleep %s\n' "$*" >>"${MOCK_TRACE}"
             check=False,
         )
 
+    def run_expiry_service(self) -> subprocess.CompletedProcess[str]:
+        due_script = self.posix(ASSET_ROOT / "cleanup-due.sh")
+        cleanup_script = self.posix(ASSET_ROOT / "cleanup.sh")
+        return subprocess.run(
+            [
+                str(self.bash),
+                "--noprofile",
+                "--norc",
+                "-c",
+                'PATH=/usr/bin:/bin; export PATH; "$1" && exec "$2"',
+                "expiry-service-test",
+                due_script,
+                cleanup_script,
+            ],
+            capture_output=True,
+            text=True,
+            env=self.env(),
+            check=False,
+        )
+
     def diagnostics(self) -> str:
         log = self.path("var/log/luna-temp-edge-expiry.log")
         return "\n".join(
@@ -265,7 +297,7 @@ def cleanup_harness() -> CleanupHarness:
 
 
 def test_shell_assets_parse_with_real_bash(cleanup_harness: CleanupHarness) -> None:
-    for filename in ("cleanup.sh", "check-expiry.sh"):
+    for filename in ("cleanup.sh", "check-expiry.sh", "cleanup-due.sh"):
         result = subprocess.run(
             [
                 str(cleanup_harness.bash),
@@ -310,6 +342,7 @@ def test_cleanup_stop_failure_keeps_credentials_and_retry_assets(
     assert cleanup_harness.path("etc/luna-temp-edge/htpasswd").exists()
     assert cleanup_harness.path("etc/systemd/system/luna-temp-edge.service").exists()
     assert cleanup_harness.path("usr/local/lib/luna-temp-edge/cleanup.sh").exists()
+    assert cleanup_harness.path("usr/local/lib/luna-temp-edge/cleanup-due.sh").exists()
 
 
 def test_cleanup_rejects_a_listener_that_reappears(
@@ -351,6 +384,7 @@ def test_certificate_failure_retains_both_persistent_timers_and_retry_assets(
             encoding="utf-8"
         ).strip() == "enabled"
     assert cleanup_harness.path("usr/local/lib/luna-temp-edge/cleanup.sh").exists()
+    assert cleanup_harness.path("usr/local/lib/luna-temp-edge/cleanup-due.sh").exists()
 
 
 def assert_edge_was_closed_after_firewall_failure(harness: CleanupHarness) -> None:
@@ -435,6 +469,9 @@ def test_retry_timer_survives_failure_and_completes_after_simulated_reboot(
     assert not cleanup_harness.path(
         "etc/systemd/system/luna-temp-edge-retry.timer"
     ).exists()
+    assert not cleanup_harness.path(
+        "usr/local/lib/luna-temp-edge/cleanup-due.sh"
+    ).exists()
 
 
 def test_test_root_requires_every_explicit_mock(cleanup_harness: CleanupHarness) -> None:
@@ -477,3 +514,129 @@ def test_expiry_guard_enforces_iso_utc_and_test_security_marker(
     security.unlink()
     expiry.write_text("2099-01-01T00:00:00Z\n", encoding="utf-8", newline="\n")
     assert run_guard().returncode != 0
+
+
+def test_retry_cadence_cannot_cleanup_before_the_active_deadline(
+    cleanup_harness: CleanupHarness,
+) -> None:
+    cleanup_harness.write(
+        "var/lib/luna-temp-edge/expires-at.test-security",
+        "owner=test;mode=0600\n",
+    )
+
+    result = cleanup_harness.run_expiry_service()
+
+    assert result.returncode == 1, result.stderr
+    assert cleanup_harness.path("etc/luna-temp-edge/htpasswd").exists()
+    assert cleanup_harness.path("etc/systemd/system/luna-temp-edge.service").exists()
+    assert not cleanup_harness.trace.exists()
+
+
+def test_switching_from_failsafe_to_72h_deadline_ignores_old_timer_cadence(
+    cleanup_harness: CleanupHarness,
+) -> None:
+    expiry = cleanup_harness.path("var/lib/luna-temp-edge/expires-at")
+    cleanup_harness.write(
+        "var/lib/luna-temp-edge/expires-at.test-security",
+        "owner=test;mode=0600\n",
+    )
+
+    # The active deadline is atomically replaced with the accepted 72h deadline.
+    expiry.write_text("2099-01-01T00:00:00Z\n", encoding="utf-8", newline="\n")
+    old_failsafe = cleanup_harness.run_expiry_service()
+    retry_tick = cleanup_harness.run_expiry_service()
+
+    assert old_failsafe.returncode == 1, old_failsafe.stderr
+    assert retry_tick.returncode == 1, retry_tick.stderr
+    assert cleanup_harness.path("etc/luna-temp-edge/htpasswd").exists()
+
+    expiry.write_text("2000-01-01T00:00:00Z\n", encoding="utf-8", newline="\n")
+    due = cleanup_harness.run_expiry_service()
+
+    assert due.returncode == 0, f"{due.stderr}\n{cleanup_harness.diagnostics()}"
+    assert not cleanup_harness.path("etc/luna-temp-edge/htpasswd").exists()
+    assert not cleanup_harness.path(
+        "etc/systemd/system/luna-temp-edge-retry.timer"
+    ).exists()
+
+
+def test_cleanup_due_rejects_invalid_security_metadata(
+    cleanup_harness: CleanupHarness,
+) -> None:
+    cleanup_harness.write(
+        "var/lib/luna-temp-edge/expires-at.test-security",
+        "owner=someone-else;mode=0666\n",
+    )
+
+    result = cleanup_harness.run_expiry_service()
+
+    assert result.returncode == 255
+    assert cleanup_harness.path("etc/luna-temp-edge/htpasswd").exists()
+
+
+def test_cleanup_due_rejects_noncanonical_utc_deadline(
+    cleanup_harness: CleanupHarness,
+) -> None:
+    cleanup_harness.path("var/lib/luna-temp-edge/expires-at").write_text(
+        "2099-01-01T00:00:00+00:00\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    cleanup_harness.write(
+        "var/lib/luna-temp-edge/expires-at.test-security",
+        "owner=test;mode=0600\n",
+    )
+
+    result = cleanup_harness.run_expiry_service()
+
+    assert result.returncode == 255
+    assert cleanup_harness.path("etc/luna-temp-edge/htpasswd").exists()
+
+
+def test_timer_shutdown_failure_retains_due_record_for_retry(
+    cleanup_harness: CleanupHarness,
+) -> None:
+    expiry = cleanup_harness.path("var/lib/luna-temp-edge/expires-at")
+    expiry.write_text("2000-01-01T00:00:00Z\n", encoding="utf-8", newline="\n")
+    cleanup_harness.write(
+        "var/lib/luna-temp-edge/expires-at.test-security",
+        "owner=test;mode=0600\n",
+    )
+    cleanup_harness.write("mock-state/timer-stop-fail")
+
+    result = cleanup_harness.run_expiry_service()
+
+    assert result.returncode != 0
+    assert expiry.exists()
+    assert cleanup_harness.path(
+        "var/lib/luna-temp-edge/expires-at.test-security"
+    ).exists()
+    assert cleanup_harness.path("usr/local/lib/luna-temp-edge/cleanup-due.sh").exists()
+    assert cleanup_harness.path(
+        "mock-state/luna-temp-edge-retry.timer.enabled"
+    ).read_text(encoding="utf-8").strip() == "enabled"
+
+
+def test_post_timer_teardown_failure_is_terminal_best_effort_not_fake_retry(
+    cleanup_harness: CleanupHarness,
+) -> None:
+    cleanup_harness.path("var/lib/luna-temp-edge/expires-at").write_text(
+        "2000-01-01T00:00:00Z\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    cleanup_harness.write(
+        "var/lib/luna-temp-edge/expires-at.test-security",
+        "owner=test;mode=0600\n",
+    )
+    cleanup_harness.write("mock-state/daemon-reload-fail")
+
+    result = cleanup_harness.run_expiry_service()
+
+    assert result.returncode == 0
+    assert "terminal best-effort" in result.stderr
+    assert "retry assets retained" not in result.stderr
+    assert cleanup_harness.path(
+        "mock-state/luna-temp-edge-retry.timer.enabled"
+    ).read_text(encoding="utf-8").strip() == "disabled"
+    assert not cleanup_harness.path("var/lib/luna-temp-edge/expires-at").exists()

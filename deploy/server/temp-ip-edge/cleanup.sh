@@ -192,6 +192,17 @@ remove_file() {
     fi
 }
 
+terminal_warning() {
+    printf '%s\n' "terminal best-effort warning: $1" >&2
+    record "WARN terminal best-effort: $1"
+}
+
+terminal_remove_file() {
+    if ! rm -f -- "$1"; then
+        terminal_warning "unable to remove a non-running residual file"
+    fi
+}
+
 record "cleanup started"
 
 # Revoke only a firewall rule that this deployment explicitly recorded as owned.
@@ -266,8 +277,6 @@ if ! rm -rf -- "${ROOT_PREFIX}/var/log/luna-temp-edge"; then
     record "ERROR failed to remove the temporary Nginx log directory"
     failures=1
 fi
-remove_file "${ROOT_PREFIX}/var/lib/luna-temp-edge/expires-at"
-remove_file "${ROOT_PREFIX}/var/lib/luna-temp-edge/expires-at.test-security"
 remove_file "${ROOT_PREFIX}/etc/luna-temp-edge/nginx.conf"
 remove_file "${ROOT_PREFIX}/etc/luna-temp-edge/tls/fullchain.pem"
 remove_file "${ROOT_PREFIX}/etc/luna-temp-edge/tls/privkey.pem"
@@ -306,24 +315,25 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge.service"
-remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-expiry.service"
-remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-expiry.timer"
-remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-failsafe.timer"
-remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-retry.timer"
-if [[ "${failures}" -ne 0 ]]; then
-    record "cleanup could not remove all units; retry assets retained"
-    exit 1
-fi
+# Keep the elapsed deadline while any timer can still retry this cleanup.
+terminal_remove_file "${ROOT_PREFIX}/var/lib/luna-temp-edge/expires-at"
+terminal_remove_file "${ROOT_PREFIX}/var/lib/luna-temp-edge/expires-at.test-security"
+rmdir -- "${ROOT_PREFIX}/var/lib/luna-temp-edge" 2>/dev/null || true
+
+terminal_remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge.service"
+terminal_remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-expiry.service"
+terminal_remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-expiry.timer"
+terminal_remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-failsafe.timer"
+terminal_remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-retry.timer"
 
 if ! "${SYSTEMCTL_BIN}" daemon-reload >/dev/null 2>&1; then
-    record "ERROR systemd daemon reload failed; retry assets retained"
-    exit 1
+    terminal_warning "systemd daemon reload failed after all timers were disabled"
 fi
 "${SYSTEMCTL_BIN}" reset-failed luna-temp-edge.service luna-temp-edge-expiry.service >/dev/null 2>&1 || true
 
 record "cleanup completed"
-remove_file "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge/check-expiry.sh"
-remove_file "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge/cleanup.sh"
+terminal_remove_file "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge/check-expiry.sh"
+terminal_remove_file "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge/cleanup-due.sh"
+terminal_remove_file "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge/cleanup.sh"
 rmdir -- "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge" 2>/dev/null || true
-exit "${failures}"
+exit 0

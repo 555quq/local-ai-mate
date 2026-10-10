@@ -49,6 +49,7 @@
 - Create: `deploy/server/temp-ip-edge/luna-temp-edge-expiry.timer.template`
 - Create: `deploy/server/temp-ip-edge/luna-temp-edge-retry.timer.template`
 - Create: `deploy/server/temp-ip-edge/check-expiry.sh`
+- Create: `deploy/server/temp-ip-edge/cleanup-due.sh`
 - Create: `deploy/server/temp-ip-edge/cleanup.sh`
 - Create: `backend/tests/test_temp_ip_deployment_contract.py`
 
@@ -59,7 +60,7 @@
 
 - [ ] **Step 1: 写部署合约测试并确认失败**
 
-在 `test_temp_ip_deployment_contract.py` 断言：独立 Nginx 完整配置通过 `__LISTEN_ADDRESS__:8443` 控制监听；包含 TLS 1.2/1.3、临时 htpasswd、`client_max_body_size 9m`、180 秒超时、关闭响应/请求 buffering 与 cache、先校验 IP Origin/`Sec-Fetch-Site`、再执行 `proxy_set_header Origin https://luna.shipmaster.asia`、清空 `Authorization`、静态与 API 安全头、允许 `data:` 音频和 `access_log off`；ACME 模板只放行 challenge 且其他请求 404；两个 timer 均含 `Persistent=true` 与各自绝对时间占位符；启动守卫拒绝缺失/过期 `expires-at`；清理脚本严格停止服务并只引用固定项目路径。
+在 `test_temp_ip_deployment_contract.py` 断言：独立 Nginx 完整配置通过 `__LISTEN_ADDRESS__:8443` 控制监听；包含 TLS 1.2/1.3、临时 htpasswd、`client_max_body_size 9m`、180 秒超时、关闭响应/请求 buffering 与 cache、先校验 IP Origin/`Sec-Fetch-Site`、再执行 `proxy_set_header Origin https://luna.shipmaster.asia`、清空 `Authorization`、静态与 API 安全头、允许 `data:` 音频和 `access_log off`；ACME 模板只放行 challenge 且其他请求 404；两个 timer 均含 `Persistent=true` 与各自绝对时间占位符；启动守卫拒绝缺失/过期 `expires-at`；到期服务必须由独立 `cleanup-due.sh` `ExecCondition` 约束，未到当前截止时间不得进入清理；清理脚本严格停止服务并只引用固定项目路径。
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_temp_ip_deployment_contract.py -q`（工作目录 `backend`）
 
@@ -71,11 +72,11 @@ Expected: FAIL，原因是临时边缘资产尚不存在。
 
 - [ ] **Step 3: 实现 systemd 单元和固定作用域清理脚本**
 
-边缘服务以前台 `daemon off` 运行，启动前用同一二进制和 prefix 执行配置检查，并调用 `check-expiry.sh` 验证 root-owned、mode 0600、严格 UTC 格式的 `expires-at` 仍在未来。unit 以低权限 Web 用户运行，启用 `ProtectSystem=strict` 等沙箱，只读发布/配置/证书路径，只写固定 runtime/log/temp 路径。expiry service 调用 root-owned 清理脚本并在失败时自动重试；failsafe/expiry timer 分别使用 `OnCalendar=__FAILSAFE_AT_UTC__`、`OnCalendar=__EXPIRES_AT_UTC__` 与 `Persistent=true`；retry timer 使用 `OnBootSec` 与 `OnUnitInactiveSec`，跨重启周期调用同一清理服务。清理脚本先尝试精确撤销本项目 UFW 规则，再无条件严格 stop/disable edge、确认 inactive/disabled 并连续多次检查 `ss -ltn` 无 8443；UFW 状态/所有权异常必须保留证据，但只能在 edge 关闭验证后阻止删除秘密。失败时保留 retry timer 及可重试组件，全部成功后才删临时 htpasswd、唯一 Certbot lineage、固定运行目录与自身 unit；重复运行返回成功。
+边缘服务以前台 `daemon off` 运行，启动前用同一二进制和 prefix 执行配置检查，并调用 `check-expiry.sh` 验证 root-owned、mode 0600、严格 UTC 格式的 `expires-at` 仍在未来。unit 以低权限 Web 用户运行，启用 `ProtectSystem=strict` 等沙箱，只读发布/配置/证书路径，只写固定 runtime/log/temp 路径。expiry service 先以 `ExecCondition=/usr/local/lib/luna-temp-edge/cleanup-due.sh` 严格验证同一 `expires-at`，只有当前 UTC 时间达到截止时间才调用 root-owned 清理脚本，并在真正失败时自动重试；未到期返回普通 condition skip。failsafe/expiry timer 分别使用 `OnCalendar=__FAILSAFE_AT_UTC__`、`OnCalendar=__EXPIRES_AT_UTC__` 与 `Persistent=true`；retry timer 使用 `OnBootSec` 与 `OnUnitInactiveSec`，跨重启周期调用同一受截止条件保护的服务。清理脚本先尝试精确撤销本项目 UFW 规则，再无条件严格 stop/disable edge、确认 inactive/disabled 并连续多次检查 `ss -ltn` 无 8443；UFW 状态/所有权异常必须保留证据，但只能在 edge 关闭验证后阻止删除秘密。安全关键失败或 timer 未确认 inactive/disabled 时保留 retry timer、到期守卫及 `expires-at`；所有 timer 已严格停用后，残留截止记录、unit 和脚本改为终态 best-effort 删除，失败只告警且不虚假声称仍能自动 retry。
 
 - [ ] **Step 4: 增加 Review Focus 负向断言并运行测试**
 
-测试必须额外拒绝：监听 80/443、模板固定公网监听而没有 `__LISTEN_ADDRESS__`、无条件 Origin 改写、代理 Authorization、请求缓冲仍开启、CSP 不允许 `data:` 音频、API 缺失安全头、缺少 `Persistent=true`、无 expires-at 守卫、忽略 systemctl stop/disable 失败、清理失败后自删恢复组件、宽泛 `/etc/letsencrypt` 删除、未校验变量参与 `rm -rf`，以及模板内出现真实密码、会话令牌或私钥。
+测试必须额外拒绝：监听 80/443、模板固定公网监听而没有 `__LISTEN_ADDRESS__`、无条件 Origin 改写、代理 Authorization、请求缓冲仍开启、CSP 不允许 `data:` 音频、API 缺失安全头、缺少 `Persistent=true`、无 expires-at 启动或清理到期守卫、retry/旧 failsafe 在当前截止前进入清理、忽略 systemctl stop/disable 失败、清理失败后自删恢复组件、宽泛 `/etc/letsencrypt` 删除、未校验变量参与 `rm -rf`，以及模板内出现真实密码、会话令牌或私钥。
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_temp_ip_deployment_contract.py -q`，随后 `.venv/Scripts/python.exe -m pytest tests -q`（工作目录 `backend`）
 
@@ -164,6 +165,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 - Remote create: `/etc/luna-temp-edge/htpasswd`
 - Remote create: `/etc/luna-temp-edge/tls/fullchain.pem`、`privkey.pem`
 - Remote create: `/usr/local/lib/luna-temp-edge/check-expiry.sh`
+- Remote create: `/usr/local/lib/luna-temp-edge/cleanup-due.sh`
 - Remote create: `/usr/local/lib/luna-temp-edge/cleanup.sh`
 - Remote create: `/etc/systemd/system/luna-temp-edge.service`
 - Remote create: `/etc/systemd/system/luna-temp-edge-expiry.service`
@@ -187,7 +189,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 3: 安装边缘和清理 systemd 单元**
 
-运行 `systemd-analyze verify` 检查 service、expiry service、failsafe timer 与 retry timer；计算当前 UTC 加 4 小时的绝对时间，把它同时写入 `expires-at`，启用 failsafe 与 retry timers，并确认触发时间/周期后才启动 loopback edge。若 UFW 已 active，记录前态并添加带注释 `luna-temp-edge-v2.3.2` 的唯一 8443/TCP 规则及其完整 tuple/编号；若 UFW inactive，不启用 UFW。
+运行 `systemd-analyze verify` 检查 service、expiry service、failsafe timer 与 retry timer；计算当前 UTC 加 4 小时的绝对时间，把它以 root:0600 严格 UTC 单行格式原子写入 `expires-at`，启用 failsafe 与 retry timers，并确认触发时间、周期及 retry 提前触发只产生 condition skip 后才启动 loopback edge。若 UFW 已 active，记录前态并添加带注释 `luna-temp-edge-v2.3.2` 的唯一 8443/TCP 规则及其完整 tuple/编号；若 UFW inactive，不启用 UFW。
 
 - [ ] **Step 4: 做服务器内正向与负向测试**
 
@@ -195,7 +197,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 5: 在隔离替代根中验证清理幂等性**
 
-用临时目录和显式 mock 的 systemctl/ss/ufw/sleep/certbot 命令执行两次 `cleanup.sh`；TEST_ROOT 模式缺少任一 mock 时必须拒绝运行，不能回退到宿主真实命令。两次成功目标仅限模拟的 `luna-temp-edge` 文件。分别注入 UFW status 失败、所有权不匹配、stop 失败、服务仍 active、端口间歇重现和证书删除失败；UFW 故障用例必须断言 edge 仍被 stop/disable 且完成端口检查。所有失败均禁止删除凭据/证书并返回非零；证书删除失败时入口已严格关闭，脚本返回非零并保留 retry timer、unit 和 cleanup，模拟重启后仍会再次调用清理。
+用临时目录和显式 mock 的 systemctl/ss/ufw/sleep/certbot 命令执行两次 `cleanup.sh`；TEST_ROOT 模式缺少任一 mock 时必须拒绝运行，不能回退到宿主真实命令。两次成功目标仅限模拟的 `luna-temp-edge` 文件。通过 expiry service 等价调用证明未来 `expires-at` 下 retry 与迟到的旧 failsafe 都只跳过、到期后才进入清理；非法日期或安全元数据必须 fail closed。分别注入 UFW status 失败、所有权不匹配、stop 失败、服务仍 active、端口间歇重现和证书删除失败；UFW 故障用例必须断言 edge 仍被 stop/disable 且完成端口检查。安全关键或 timer 停用失败均禁止删除可重试截止状态并返回非零；证书删除失败时保留 retry timer、unit、`cleanup-due.sh` 和 cleanup，模拟重启后仍会再次调用清理。另注入 timer 全部停用后的 daemon-reload 失败，必须明确作为 terminal best-effort 告警并返回安全完成，不得声称不存在的自动 retry。
 
 ### Task 5: 腾讯云防火墙与公网端到端验收
 
@@ -251,11 +253,11 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 1: 计算并固化绝对到期时间**
 
-使用服务器同步后的 UTC 当前时间作为 `T0`，计算 `T0 + 72 hours`，同时记录 UTC 与 Asia/Shanghai 时间。渲染 timer 的 `OnCalendar=<UTC timestamp> UTC`、`Persistent=true`，把同一时间写入 root-owned mode 0600 的 `expires-at`。
+使用服务器同步后的 UTC 当前时间作为 `T0`，计算 `T0 + 72 hours`，同时记录 UTC 与 Asia/Shanghai 时间。渲染 timer 的 `OnCalendar=<UTC timestamp> UTC`、`Persistent=true`；在 `expires-at` 同目录创建 root-owned mode 0600 临时文件，写入同一严格 UTC 时间并 fsync 后以原子 rename 替换当前 4 小时截止。替换后立即运行 `check-expiry.sh`，并验证 `cleanup-due.sh` 返回未到期 condition skip。
 
 - [ ] **Step 2: 验证并启用 timer**
 
-运行 `systemd-analyze calendar` 与 `systemd-analyze verify`；`systemctl enable --now luna-temp-edge-expiry.timer` 后，`systemctl list-timers` 的 NEXT 必须与记录的 UTC 时间一致。只有确认 72 小时 timer active、NEXT 正确且 retry timer active 后，才禁用并删除 4 小时 failsafe timer。用模拟 timer/替代根测试开机补执行和清理失败后跨重启周期重试语义，不提前触发真实清理。
+运行 `systemd-analyze calendar` 与 `systemd-analyze verify`；`systemctl enable --now luna-temp-edge-expiry.timer` 后，`systemctl list-timers` 的 NEXT 必须与记录的 UTC 时间一致。只有确认 72 小时 timer active、NEXT 正确且 retry timer active 后，才禁用并删除 4 小时 failsafe timer。模拟旧 failsafe 在切换后迟到触发以及 retry 周期触发，二者都必须因当前 72 小时 `expires-at` 未到而跳过；再用替代根测试到期清理、开机补执行和清理失败后跨重启周期重试语义，不提前触发真实清理。
 
 - [ ] **Step 3: 完成安全与秘密扫描**
 

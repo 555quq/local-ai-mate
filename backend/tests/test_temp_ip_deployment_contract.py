@@ -92,6 +92,22 @@ def test_expiry_guard_rejects_missing_invalid_or_elapsed_deadline() -> None:
     assert "exit 1" in script
 
 
+def test_cleanup_due_guard_only_allows_cleanup_at_or_after_deadline() -> None:
+    script = read("cleanup-due.sh")
+
+    assert 'EXPIRY_FILE="/var/lib/luna-temp-edge/expires-at"' in script
+    assert '-f "${EXPIRY_FILE}"' in script
+    assert 'stat -c "%u:%a"' in script
+    assert '"0:600"' in script
+    assert ".test-security" in script
+    assert "date -u --date=" in script
+    assert "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" in script
+    assert "expiry_epoch" in script
+    assert "now_epoch" in script
+    assert "expiry_epoch > now_epoch" in script
+    assert "exit 255" in script
+
+
 def test_acme_template_exposes_only_the_challenge_path() -> None:
     config = read("acme-http.conf.template")
 
@@ -131,6 +147,7 @@ def test_systemd_units_validate_and_run_the_isolated_edge() -> None:
     assert "ReadWritePaths=/var/lib/luna-temp-edge/nginx" in edge
     assert "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX" in edge
     assert "CapabilityBoundingSet=" in edge
+    assert "ExecCondition=/usr/local/lib/luna-temp-edge/cleanup-due.sh" in expiry
     assert "ExecStart=/usr/local/lib/luna-temp-edge/cleanup.sh" in expiry
     assert "Restart=on-failure" in expiry
     assert "RestartSec=" in expiry
@@ -165,6 +182,9 @@ def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
     failsafe_stop_at = script.index("ensure_unit_inactive luna-temp-edge-failsafe.timer")
     expiry_stop_at = script.index("ensure_unit_inactive luna-temp-edge-expiry.timer")
     retry_stop_at = script.index("ensure_unit_inactive luna-temp-edge-retry.timer")
+    expiry_record_remove_at = script.index(
+        'terminal_remove_file "${ROOT_PREFIX}/var/lib/luna-temp-edge/expires-at"'
+    )
     assert 'UFW_OWNERSHIP_FILE="${ROOT_PREFIX}/var/lib/luna-temp-edge/ufw-rule-owned"' in script
     ownership_at = script.index('[[ -f "${UFW_OWNERSHIP_FILE}" ]]')
     ufw_delete_at = script.index('"${UFW_BIN}" --force delete allow 8443/tcp')
@@ -175,6 +195,9 @@ def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
     assert final_failure_gate < failsafe_stop_at
     assert final_failure_gate < expiry_stop_at
     assert final_failure_gate < retry_stop_at
+    assert retry_stop_at < expiry_record_remove_at
+    assert "terminal best-effort warning" in script
+    assert "daemon reload failed; retry assets retained" not in script
     assert 'status_output="$("${UFW_BIN}" status' in script
     assert "invalid UFW ownership record" in script
 
@@ -197,6 +220,7 @@ def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
     assert "/etc/systemd/system/luna-temp-edge-retry.timer" in script
     assert "/usr/local/lib/luna-temp-edge/cleanup.sh" in script
     assert "/usr/local/lib/luna-temp-edge/check-expiry.sh" in script
+    assert "/usr/local/lib/luna-temp-edge/cleanup-due.sh" in script
     assert "LUNA_TEMP_EDGE_TEST_ROOT" in script
     assert "/tmp/luna-temp-edge-test-" in script
 
@@ -222,6 +246,7 @@ def test_assets_contain_placeholders_and_no_embedded_secrets() -> None:
         "luna-temp-edge-retry.timer.template",
         "cleanup.sh",
         "check-expiry.sh",
+        "cleanup-due.sh",
     )
     combined = "\n".join(read(filename) for filename in filenames)
 
