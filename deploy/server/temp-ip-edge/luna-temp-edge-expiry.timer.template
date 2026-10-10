@@ -1,0 +1,11 @@
+[Unit]
+Description=Expire the Luna temporary public IP edge
+
+[Timer]
+OnCalendar=__EXPIRES_AT_UTC__
+Persistent=true
+AccuracySec=1s
+Unit=luna-temp-edge-expiry.service
+
+[Install]
+WantedBy=timers.target

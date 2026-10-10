@@ -1,0 +1,104 @@
+worker_processes 1;
+pid /run/luna-temp-edge/nginx.pid;
+error_log /var/log/luna-temp-edge/error.log warn;
+
+events {
+    worker_connections 256;
+}
+
+http {
+    include /www/server/nginx/conf/mime.types;
+    default_type application/octet-stream;
+
+    access_log off;
+    sendfile on;
+    server_tokens off;
+
+    client_body_temp_path /var/lib/luna-temp-edge/nginx/client_temp;
+    proxy_temp_path /var/lib/luna-temp-edge/nginx/proxy_temp;
+    fastcgi_temp_path /var/lib/luna-temp-edge/nginx/fastcgi_temp;
+    uwsgi_temp_path /var/lib/luna-temp-edge/nginx/uwsgi_temp;
+    scgi_temp_path /var/lib/luna-temp-edge/nginx/scgi_temp;
+
+    limit_req_zone $binary_remote_addr zone=luna_temp_api:1m rate=10r/s;
+    limit_conn_zone $binary_remote_addr zone=luna_temp_conn:1m;
+
+    map $http_origin $luna_origin_allowed {
+        default 0;
+        "" 1;
+        "https://__PUBLIC_IP__:8443" 1;
+    }
+
+    map $http_sec_fetch_site $luna_fetch_site_allowed {
+        default 0;
+        "" 1;
+        same-origin 1;
+        none 1;
+    }
+
+    server {
+        listen __LISTEN_ADDRESS__:8443 ssl;
+        server_name __PUBLIC_IP__;
+
+        root /www/wwwroot/luna.shipmaster.asia/current;
+        index index.html;
+        client_max_body_size 9m;
+
+        ssl_certificate __CERT_FULLCHAIN__;
+        ssl_certificate_key __CERT_PRIVKEY__;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_session_cache shared:LUNA_TEMP_EDGE:1m;
+        ssl_session_timeout 10m;
+
+        auth_basic "Luna temporary test";
+        auth_basic_user_file __TEMP_AUTH_FILE__;
+
+        limit_conn luna_temp_conn 8;
+
+        add_header Strict-Transport-Security "max-age=259200" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Permissions-Policy "microphone=(self)" always;
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
+
+        location /api/ {
+            limit_req zone=luna_temp_api burst=20 nodelay;
+
+            if ($luna_origin_allowed = 0) {
+                return 403;
+            }
+            if ($luna_fetch_site_allowed = 0) {
+                return 403;
+            }
+
+            proxy_pass http://127.0.0.1:18765;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header Origin https://luna.shipmaster.asia;
+            proxy_set_header Authorization "";
+            proxy_set_header X-Session-Token $http_x_session_token;
+            proxy_set_header Connection "";
+
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 180s;
+            proxy_send_timeout 180s;
+
+            add_header Strict-Transport-Security "max-age=259200" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-Frame-Options "DENY" always;
+            add_header Referrer-Policy "no-referrer" always;
+            add_header Permissions-Policy "microphone=(self)" always;
+            add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
+            add_header Cache-Control "no-store" always;
+        }
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }
+}

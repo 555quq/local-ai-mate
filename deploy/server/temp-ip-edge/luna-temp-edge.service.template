@@ -1,0 +1,47 @@
+[Unit]
+Description=Luna isolated temporary public IP edge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__NGINX_USER__
+Group=__NGINX_USER__
+UMask=0027
+PIDFile=/run/luna-temp-edge/nginx.pid
+RuntimeDirectory=luna-temp-edge
+RuntimeDirectoryMode=0750
+LogsDirectory=luna-temp-edge
+LogsDirectoryMode=0750
+ExecCondition=+/usr/local/lib/luna-temp-edge/check-expiry.sh
+ExecStartPre=__NGINX_BINARY__ -p /var/lib/luna-temp-edge/nginx/ -c /etc/luna-temp-edge/nginx.conf -t
+ExecStart=__NGINX_BINARY__ -p /var/lib/luna-temp-edge/nginx/ -c /etc/luna-temp-edge/nginx.conf -g "daemon off;"
+ExecReload=__NGINX_BINARY__ -p /var/lib/luna-temp-edge/nginx/ -c /etc/luna-temp-edge/nginx.conf -s reload
+ExecStop=__NGINX_BINARY__ -p /var/lib/luna-temp-edge/nginx/ -c /etc/luna-temp-edge/nginx.conf -s quit
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/etc/luna-temp-edge
+ReadOnlyPaths=/www/wwwroot/luna.shipmaster.asia/current
+ReadWritePaths=/run/luna-temp-edge
+ReadWritePaths=/var/log/luna-temp-edge
+ReadWritePaths=/var/lib/luna-temp-edge/nginx
+
+[Install]
+WantedBy=multi-user.target

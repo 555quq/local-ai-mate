@@ -1,0 +1,16 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __PUBLIC_IP__;
+
+    access_log off;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/lib/luna-temp-edge/acme;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 404;
+    }
+}

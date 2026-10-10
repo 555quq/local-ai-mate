@@ -1,0 +1,9 @@
+[Unit]
+Description=Close and remove the Luna temporary public IP edge
+After=luna-temp-edge.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/luna-temp-edge/cleanup.sh
+Restart=on-failure
+RestartSec=30s
