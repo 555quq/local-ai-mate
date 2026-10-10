@@ -14,10 +14,12 @@
 
 - 临时公网地址固定为 `https://49.234.57.214:8443`，测试窗口从全部验收通过的 `T0` 开始精确计算 72 小时。
 - 8443 使用独立 Nginx 进程、配置、PID、日志和 systemd 服务；不得长期加入主 Nginx 的 80/443 虚拟主机集合。
+- 服务器内初验只绑定 `127.0.0.1:8443`；审计云防火墙并启用绝对时间 4 小时故障保护 timer 后，才允许切换到 `0.0.0.0:8443`。
 - Certbot 必须为 5.4 或更高版本，并使用 `--preferred-profile shortlived --webroot --ip-address 49.234.57.214`；正式证书 SAN 必须精确包含该 IP。
 - 正式证书剩余有效期少于 80 小时时不得开始测试；不得使用 HTTP、自签名证书或忽略浏览器证书警告作为替代。
 - 临时 Basic Auth 凭据与正式凭据分离，密码至少 128 位随机熵，只显示一次，不进入 Git、日志或命令历史。
 - FastAPI 仍只允许 `https://luna.shipmaster.asia` Origin；临时边缘只在反向代理请求中规范化 Origin，不重启或放宽后端。
+- Basic Auth 是公网主认证边界；前端内置的 FastAPI 会话令牌不是独立秘密，测试结束后必须轮换并在正式域名发布前重建前端。
 - 服务器不保存模型、SQLite、聊天内容、录音或 TTS 音频；18765 与 Windows 8765 继续只绑定回环地址。
 - 不修改 `www.shipmaster.asia`、OpenClaw、宝塔面板、管理 SSH、正式 Basic Auth、正式域名证书或 DNS。
 - 主 Nginx、独立 Nginx 或 systemd 配置验证失败时不得 reload/start；任何认证、Origin、TLS 或到期清理负向测试失败都阻止开放公网规则。
@@ -28,8 +30,10 @@
 - 公网 80 被腾讯云未备案策略拦截或返回非 ACME 内容：staging HTTP-01 必须先成功，否则不申请正式证书、不开放 8443。
 - 宝塔 Nginx 二进制的编译路径与独立 prefix 冲突：独立配置必须显式设置 PID、日志和全部临时目录，并在启动前执行同一二进制的 `-t`。
 - Basic Auth 的 `Authorization` 被转发给 FastAPI：代理必须清空该请求头，同时保留前端使用的 `X-Session-Token`。
+- 非同源客户端借助无条件 Origin 改写调用 API：边缘必须先精确校验 IP Origin 与 `Sec-Fetch-Site`，再规范化后端 Origin。
 - systemd 到期时服务器关机：timer 必须使用绝对 UTC `OnCalendar` 与 `Persistent=true`，开机后立即补执行清理。
-- 清理部分失败：即使证书或文件删除失败，第一步也必须停止/禁用边缘服务并确认 8443 无监听；失败项只记录无秘密告警。
+- 部署会话在公网验收中断：4 小时故障保护 timer 必须已在公网绑定前启用，不能让入口处于无到期保护状态。
+- 清理部分失败：停止/禁用边缘服务失败不得忽略；必须确认 inactive/disabled 且连续多次无 8443 监听，才能继续删除证书或文件。
 
 ---
 
@@ -41,18 +45,20 @@
 - Create: `deploy/server/temp-ip-edge/nginx.conf.template`
 - Create: `deploy/server/temp-ip-edge/luna-temp-edge.service.template`
 - Create: `deploy/server/temp-ip-edge/luna-temp-edge-expiry.service.template`
+- Create: `deploy/server/temp-ip-edge/luna-temp-edge-failsafe.timer.template`
 - Create: `deploy/server/temp-ip-edge/luna-temp-edge-expiry.timer.template`
+- Create: `deploy/server/temp-ip-edge/check-expiry.sh`
 - Create: `deploy/server/temp-ip-edge/cleanup.sh`
 - Create: `backend/tests/test_temp_ip_deployment_contract.py`
 
 **Interfaces:**
 
 - Consumes: v2.3.2 固定 IP、端口、发布目录、回环上游、生产 Origin、服务名称和清理范围。
-- Produces: `__PUBLIC_IP__`、`__NGINX_BINARY__`、`__NGINX_USER__`、`__CERT_FULLCHAIN__`、`__CERT_PRIVKEY__`、`__TEMP_AUTH_FILE__`、`__EXPIRES_AT_UTC__` 占位符模板，以及无秘密的幂等清理入口 `/usr/local/lib/luna-temp-edge/cleanup.sh`。
+- Produces: `__PUBLIC_IP__`、`__LISTEN_ADDRESS__`、`__NGINX_BINARY__`、`__NGINX_USER__`、`__CERT_FULLCHAIN__`、`__CERT_PRIVKEY__`、`__TEMP_AUTH_FILE__`、`__FAILSAFE_AT_UTC__`、`__EXPIRES_AT_UTC__` 占位符模板，以及无秘密的幂等清理入口 `/usr/local/lib/luna-temp-edge/cleanup.sh`。
 
 - [ ] **Step 1: 写部署合约测试并确认失败**
 
-在 `test_temp_ip_deployment_contract.py` 断言：独立 Nginx 完整配置只监听 8443；包含 TLS 1.2/1.3、临时 htpasswd、`client_max_body_size 9m`、180 秒超时、关闭 buffering/cache、`proxy_set_header Origin https://luna.shipmaster.asia`、`proxy_set_header Authorization ""`、安全头和 `access_log off`；ACME 模板只放行 challenge 且其他请求 404；timer 含 `Persistent=true` 与绝对时间占位符；清理脚本先停止服务并只引用固定项目路径。
+在 `test_temp_ip_deployment_contract.py` 断言：独立 Nginx 完整配置通过 `__LISTEN_ADDRESS__:8443` 控制监听；包含 TLS 1.2/1.3、临时 htpasswd、`client_max_body_size 9m`、180 秒超时、关闭 buffering/cache、先校验 IP Origin/`Sec-Fetch-Site`、再执行 `proxy_set_header Origin https://luna.shipmaster.asia`、清空 `Authorization`、静态与 API 安全头和 `access_log off`；ACME 模板只放行 challenge 且其他请求 404；两个 timer 均含 `Persistent=true` 与各自绝对时间占位符；启动守卫拒绝缺失/过期 `expires-at`；清理脚本严格停止服务并只引用固定项目路径。
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_temp_ip_deployment_contract.py -q`（工作目录 `backend`）
 
@@ -64,11 +70,11 @@ Expected: FAIL，原因是临时边缘资产尚不存在。
 
 - [ ] **Step 3: 实现 systemd 单元和固定作用域清理脚本**
 
-边缘服务以前台 `daemon off` 运行，启动前用同一二进制和 prefix 执行配置检查。expiry service 调用 root 所有的清理脚本；timer 使用 `OnCalendar=__EXPIRES_AT_UTC__` 与 `Persistent=true`。清理脚本必须先 stop/disable edge，再检查 `ss -ltn` 无 8443，然后处理带 `luna-temp-edge-v2.3.2` 标记的 UFW 规则、临时 htpasswd、唯一 Certbot lineage 和固定运行目录；重复运行返回成功。
+边缘服务以前台 `daemon off` 运行，启动前用同一二进制和 prefix 执行配置检查，并调用 `check-expiry.sh` 验证 root-owned `expires-at` 仍在未来。unit 以低权限 Web 用户运行，启用 `ProtectSystem=strict` 等沙箱，只读发布/配置/证书路径，只写固定 runtime/log/temp 路径。expiry service 调用 root-owned 清理脚本并在失败时自动重试；failsafe/expiry timer 分别使用 `OnCalendar=__FAILSAFE_AT_UTC__`、`OnCalendar=__EXPIRES_AT_UTC__` 与 `Persistent=true`。清理脚本先精确撤销本项目 UFW 规则，再严格 stop/disable edge、确认 inactive/disabled 并连续多次检查 `ss -ltn` 无 8443；失败时保留可重试组件，全部成功后才删临时 htpasswd、唯一 Certbot lineage、固定运行目录与自身 unit；重复运行返回成功。
 
 - [ ] **Step 4: 增加 Review Focus 负向断言并运行测试**
 
-测试必须额外拒绝：监听 80/443、代理 Authorization、缺少 `Persistent=true`、宽泛 `/etc/letsencrypt` 删除、未校验变量参与 `rm -rf`，以及模板内出现真实密码、会话令牌或私钥。
+测试必须额外拒绝：监听 80/443、模板固定公网监听而没有 `__LISTEN_ADDRESS__`、无条件 Origin 改写、代理 Authorization、API 缺失安全头、缺少 `Persistent=true`、无 expires-at 守卫、忽略 systemctl stop/disable 失败、清理失败后自删恢复组件、宽泛 `/etc/letsencrypt` 删除、未校验变量参与 `rm -rf`，以及模板内出现真实密码、会话令牌或私钥。
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_temp_ip_deployment_contract.py -q`，随后 `.venv/Scripts/python.exe -m pytest tests -q`（工作目录 `backend`）
 
@@ -155,16 +161,19 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 - Create (ignored): `runtime/deployment/temp-ip-v2.3.2-secrets.psd1`
 - Remote create: `/etc/luna-temp-edge/nginx.conf`
 - Remote create: `/etc/luna-temp-edge/htpasswd`
+- Remote create: `/etc/luna-temp-edge/tls/fullchain.pem`、`privkey.pem`
+- Remote create: `/usr/local/lib/luna-temp-edge/check-expiry.sh`
 - Remote create: `/usr/local/lib/luna-temp-edge/cleanup.sh`
 - Remote create: `/etc/systemd/system/luna-temp-edge.service`
 - Remote create: `/etc/systemd/system/luna-temp-edge-expiry.service`
+- Remote create before public binding: `/etc/systemd/system/luna-temp-edge-failsafe.timer`
 - Remote create after acceptance: `/etc/systemd/system/luna-temp-edge-expiry.timer`
 - Remote state: `/var/lib/luna-temp-edge/expires-at`
 
 **Interfaces:**
 
 - Consumes: Task 1 模板、Task 2 实际 Nginx 路径/用户、Task 3 正式证书、现有前端与回环 API。
-- Produces: 仅本机可达的初始 8443 HTTPS 服务、一次性临时 Basic Auth 凭据和待验收后启用的绝对时间 timer。
+- Produces: 仅本机可达的初始 8443 HTTPS 服务、一次性临时 Basic Auth 凭据、已启用的 4 小时故障保护 timer 和待验收后启用的 72 小时 timer。
 
 - [ ] **Step 1: 生成不落命令历史的独立临时凭据**
 
@@ -172,19 +181,19 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 2: 渲染并离线验证独立 Nginx**
 
-把 Task 1 模板渲染到 `/etc/luna-temp-edge/nginx.conf`，证书路径固定指向唯一 production lineage；创建显式 PID、日志和临时目录并限制 owner/mode。Run：实际 Nginx 二进制加独立 `-p`/`-c` 的 `-t`。Expected：PASS，且配置展开结果不监听 80/443、不包含正式 htpasswd 路径。
+把正式 lineage 的证书和私钥复制到独立 0640 root/Web组 TLS 目录，再以 `__LISTEN_ADDRESS__=127.0.0.1` 渲染 Nginx；创建显式 PID、日志和临时目录并限制 owner/mode。Run：实际 Nginx 二进制加独立 `-p`/`-c` 的 `-t`。Expected：PASS，且配置展开结果只监听 `127.0.0.1:8443`、不监听 80/443、不包含正式 htpasswd 路径；systemd unit 展开后只读访问发布/配置/TLS，只写固定运行目录。
 
 - [ ] **Step 3: 安装边缘和清理 systemd 单元**
 
-运行 `systemd-analyze verify` 检查 service 与 expiry service；daemon-reload 后先只在服务器启动 edge，不创建 timer。若 UFW 已 active，添加带注释 `luna-temp-edge-v2.3.2` 的唯一 8443/TCP 规则；若 UFW inactive，不启用 UFW。
+运行 `systemd-analyze verify` 检查 service、expiry service 与 failsafe timer；计算当前 UTC 加 4 小时的绝对时间，把它同时写入 `expires-at` 并启用 `luna-temp-edge-failsafe.timer`，确认 NEXT 精确匹配后才启动 loopback edge。若 UFW 已 active，记录前态并添加带注释 `luna-temp-edge-v2.3.2` 的唯一 8443/TCP 规则及其完整 tuple/编号；若 UFW inactive，不启用 UFW。
 
 - [ ] **Step 4: 做服务器内正向与负向测试**
 
-使用 `curl --resolve`/IP HTTPS 验证：未认证根/API 401、错误账号 401、正确临时账号静态 200、API 健康状态可达；`openssl s_client` 证实 TLS 1.2/1.3 与 IP SAN；检查代理展开配置含清空 Authorization、固定 Origin 和保留 `X-Session-Token`。确认 `ss -ltnp` 只新增 8443。
+使用服务器回环 IP HTTPS 验证未认证根/API 均为 401；正确临时凭据留到 Task 5 从 Windows 受限秘密文件通过浏览器验证，禁止在 shell 参数或历史中出现明文。`openssl s_client` 证实 TLS 1.2/1.3 与 IP SAN；检查代理展开配置含 Origin/`Sec-Fetch-Site` 校验、清空 Authorization、规范化 Origin、保留 `X-Session-Token` 及 API 全部安全头。确认 `ss -ltnp` 只新增 `127.0.0.1:8443`，failsafe timer active，删除/过期 expires-at 后服务无法启动。
 
 - [ ] **Step 5: 在隔离替代根中验证清理幂等性**
 
-用临时目录、模拟 systemctl/ss/ufw/certbot 命令执行两次 `cleanup.sh`；两次都成功，目标仅限模拟的 `luna-temp-edge` 文件。额外注入证书删除失败，断言停止服务和 8443 无监听检查仍先执行、脚本返回非零并保留无秘密错误记录。
+用临时目录、模拟 systemctl/ss/ufw/certbot 命令执行两次 `cleanup.sh`；两次都成功，目标仅限模拟的 `luna-temp-edge` 文件。分别注入 UFW 所有权不匹配、stop 失败、服务仍 active、端口间歇重现和证书删除失败，断言前四种情况禁止删除凭据/证书并返回非零；证书删除失败时入口已严格关闭，脚本返回非零并保留 unit/cleanup 以供自动重试。
 
 ### Task 5: 腾讯云防火墙与公网端到端验收
 
@@ -198,13 +207,13 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 - Consumes: Task 4 本机已验证但尚未对公网开放的临时入口。
 - Produces: 通过公网浏览器验证的文字、STT、TTS、认证、离线恢复与既有服务隔离证据。
 
-- [ ] **Step 1: 仅开放腾讯云 8443/TCP**
+- [ ] **Step 1: 审计规则、切换公网监听并仅开放 8443/TCP**
 
-通过腾讯云控制台为当前 Lighthouse 实例新增单端口 TCP 8443 入站规则；不开放 18765、8765 或端口范围，不修改 80/443/SSH 规则。截图/记录规则 ID 与时间，但不记录账号 Cookie 或访问令牌。
+先通过腾讯云控制台确认不存在 8443 或全端口入站放行规则。确认 4 小时 failsafe timer active 后，将独立 Nginx 配置原子改为 `__LISTEN_ADDRESS__=0.0.0.0`，执行 `-t` 并仅重启独立 edge；随后为当前 Lighthouse 实例新增单端口 TCP 8443 入站规则。不开放 18765、8765 或端口范围，不修改 80/443/SSH 规则。截图/记录规则 ID 与时间，但不记录账号 Cookie 或访问令牌。
 
 - [ ] **Step 2: 验证公网 TLS 与双层认证边界**
 
-从非服务器网络访问 `https://49.234.57.214:8443`：浏览器无证书警告；未认证和错误 Basic Auth 均 401；正确 Basic Auth 可加载页面；错误/缺失 `X-Session-Token` 的写操作失败；正确 token 的同源写操作成功。
+从非服务器网络访问 `https://49.234.57.214:8443`：浏览器无证书警告；未认证和错误 Basic Auth 均 401；正确 Basic Auth 从本机受限秘密文件注入浏览器，不进入 URL、终端参数、历史或截图；错误/缺失 `X-Session-Token` 的写操作失败；前端 token 的同源写操作成功；错误 Origin 或跨站 `Sec-Fetch-Site` 返回 403。
 
 - [ ] **Step 3: 验证文字与历史对话**
 
@@ -230,6 +239,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 - Modify: `docs/superpowers/specs/2026-10-10-temporary-public-ip-test-design-v2.3.2.md`
 - Modify: `README.md`
 - Remote create: `/etc/systemd/system/luna-temp-edge-expiry.timer`
+- Remote remove after replacement: `/etc/systemd/system/luna-temp-edge-failsafe.timer`
 - Remote create: `/var/lib/luna-temp-edge/expires-at`
 
 **Interfaces:**
@@ -243,7 +253,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 2: 验证并启用 timer**
 
-运行 `systemd-analyze calendar` 与 `systemd-analyze verify`；`systemctl enable --now luna-temp-edge-expiry.timer` 后，`systemctl list-timers` 的 NEXT 必须与记录的 UTC 时间一致。用模拟 timer/替代根测试开机补执行语义，不提前触发真实清理。
+运行 `systemd-analyze calendar` 与 `systemd-analyze verify`；`systemctl enable --now luna-temp-edge-expiry.timer` 后，`systemctl list-timers` 的 NEXT 必须与记录的 UTC 时间一致。只有确认 72 小时 timer active 且 NEXT 正确后，才禁用并删除 4 小时 failsafe timer。用模拟 timer/替代根测试开机补执行语义，不提前触发真实清理。
 
 - [ ] **Step 3: 完成安全与秘密扫描**
 
@@ -286,7 +296,11 @@ git commit -m "docs: verify temporary IP test v2.3.2"
 
 通过控制台删除 Task 5 记录的单条规则，不修改其他规则；从公网确认 8443 超时/拒绝，域名站点与 SSH 仍正常。
 
-- [ ] **Step 3: 补记最终关闭结果并提交**
+- [ ] **Step 3: 轮换临时测试期间可见的 FastAPI 会话令牌**
+
+在 Windows 生成新的生产会话令牌并更新 Git 忽略的秘密文件；安全重启本项目后端并验证回环健康与 SSH 隧道恢复。正式域名解除备案拦截前必须以新 token 重新构建前端；不得继续发布包含旧 token 的现有测试包。
+
+- [ ] **Step 4: 补记最终关闭结果并提交**
 
 在 verification 文档中增加实际清理时间、自动/人工步骤结果和既有服务复核，不写入凭据或日志正文。
 
