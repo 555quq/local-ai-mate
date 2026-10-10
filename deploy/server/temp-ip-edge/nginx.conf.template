@@ -8,6 +8,9 @@ events {
 
 http {
     include /www/server/nginx/conf/mime.types;
+    # The aaPanel Nginx binary is built with ngx_lua and loads resty.core at
+    # runtime. Keep the isolated prefix from falling back to /usr/local paths.
+    lua_package_path "/www/server/nginx/lib/lua/?.lua;;";
     default_type application/octet-stream;
 
     access_log off;

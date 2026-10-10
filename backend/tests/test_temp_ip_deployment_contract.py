@@ -14,6 +14,7 @@ def test_nginx_is_a_complete_isolated_8443_configuration() -> None:
     config = read("nginx.conf.template")
 
     assert "worker_processes 1;" in config
+    assert 'lua_package_path "/www/server/nginx/lib/lua/?.lua;;";' in config
     assert "pid /run/luna-temp-edge/nginx.pid;" in config
     assert "events {" in config
     assert "http {" in config
