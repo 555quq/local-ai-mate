@@ -70,7 +70,7 @@ Expected: FAIL，原因是临时边缘资产尚不存在。
 
 - [ ] **Step 3: 实现 systemd 单元和固定作用域清理脚本**
 
-边缘服务以前台 `daemon off` 运行，启动前用同一二进制和 prefix 执行配置检查，并调用 `check-expiry.sh` 验证 root-owned `expires-at` 仍在未来。unit 以低权限 Web 用户运行，启用 `ProtectSystem=strict` 等沙箱，只读发布/配置/证书路径，只写固定 runtime/log/temp 路径。expiry service 调用 root-owned 清理脚本并在失败时自动重试；failsafe/expiry timer 分别使用 `OnCalendar=__FAILSAFE_AT_UTC__`、`OnCalendar=__EXPIRES_AT_UTC__` 与 `Persistent=true`。清理脚本先精确撤销本项目 UFW 规则，再严格 stop/disable edge、确认 inactive/disabled 并连续多次检查 `ss -ltn` 无 8443；失败时保留可重试组件，全部成功后才删临时 htpasswd、唯一 Certbot lineage、固定运行目录与自身 unit；重复运行返回成功。
+边缘服务以前台 `daemon off` 运行，启动前用同一二进制和 prefix 执行配置检查，并调用 `check-expiry.sh` 验证 root-owned、mode 0600、严格 UTC 格式的 `expires-at` 仍在未来。unit 以低权限 Web 用户运行，启用 `ProtectSystem=strict` 等沙箱，只读发布/配置/证书路径，只写固定 runtime/log/temp 路径。expiry service 调用 root-owned 清理脚本并在失败时自动重试；failsafe/expiry timer 分别使用 `OnCalendar=__FAILSAFE_AT_UTC__`、`OnCalendar=__EXPIRES_AT_UTC__` 与 `Persistent=true`。清理脚本先精确撤销本项目 UFW 规则，再严格 stop/disable edge、确认 inactive/disabled 并连续多次检查 `ss -ltn` 无 8443；UFW 状态/所有权异常必须保留证据并在删除秘密前退出。失败时保留至少一个持久 timer 及可重试组件，全部成功后才删临时 htpasswd、唯一 Certbot lineage、固定运行目录与自身 unit；重复运行返回成功。
 
 - [ ] **Step 4: 增加 Review Focus 负向断言并运行测试**
 
@@ -193,7 +193,7 @@ Expected: HTTP-01 成功，staging 证书 SAN 含目标 IP。失败时恢复 ACM
 
 - [ ] **Step 5: 在隔离替代根中验证清理幂等性**
 
-用临时目录、模拟 systemctl/ss/ufw/certbot 命令执行两次 `cleanup.sh`；两次都成功，目标仅限模拟的 `luna-temp-edge` 文件。分别注入 UFW 所有权不匹配、stop 失败、服务仍 active、端口间歇重现和证书删除失败，断言前四种情况禁止删除凭据/证书并返回非零；证书删除失败时入口已严格关闭，脚本返回非零并保留 unit/cleanup 以供自动重试。
+用临时目录和显式 mock 的 systemctl/ss/ufw/sleep/certbot 命令执行两次 `cleanup.sh`；TEST_ROOT 模式缺少任一 mock 时必须拒绝运行，不能回退到宿主真实命令。两次成功目标仅限模拟的 `luna-temp-edge` 文件。分别注入 UFW status 失败、所有权不匹配、stop 失败、服务仍 active、端口间歇重现和证书删除失败，断言前五种情况禁止删除凭据/证书并返回非零；证书删除失败时入口已严格关闭，脚本返回非零并保留持久 timer、unit 和 cleanup 以供重启后继续重试。
 
 ### Task 5: 腾讯云防火墙与公网端到端验收
 
