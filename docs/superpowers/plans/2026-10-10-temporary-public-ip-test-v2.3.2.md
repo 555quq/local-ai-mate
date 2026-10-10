@@ -58,7 +58,7 @@
 
 - [ ] **Step 1: 写部署合约测试并确认失败**
 
-在 `test_temp_ip_deployment_contract.py` 断言：独立 Nginx 完整配置通过 `__LISTEN_ADDRESS__:8443` 控制监听；包含 TLS 1.2/1.3、临时 htpasswd、`client_max_body_size 9m`、180 秒超时、关闭 buffering/cache、先校验 IP Origin/`Sec-Fetch-Site`、再执行 `proxy_set_header Origin https://luna.shipmaster.asia`、清空 `Authorization`、静态与 API 安全头和 `access_log off`；ACME 模板只放行 challenge 且其他请求 404；两个 timer 均含 `Persistent=true` 与各自绝对时间占位符；启动守卫拒绝缺失/过期 `expires-at`；清理脚本严格停止服务并只引用固定项目路径。
+在 `test_temp_ip_deployment_contract.py` 断言：独立 Nginx 完整配置通过 `__LISTEN_ADDRESS__:8443` 控制监听；包含 TLS 1.2/1.3、临时 htpasswd、`client_max_body_size 9m`、180 秒超时、关闭响应/请求 buffering 与 cache、先校验 IP Origin/`Sec-Fetch-Site`、再执行 `proxy_set_header Origin https://luna.shipmaster.asia`、清空 `Authorization`、静态与 API 安全头、允许 `data:` 音频和 `access_log off`；ACME 模板只放行 challenge 且其他请求 404；两个 timer 均含 `Persistent=true` 与各自绝对时间占位符；启动守卫拒绝缺失/过期 `expires-at`；清理脚本严格停止服务并只引用固定项目路径。
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_temp_ip_deployment_contract.py -q`（工作目录 `backend`）
 
@@ -74,7 +74,7 @@ Expected: FAIL，原因是临时边缘资产尚不存在。
 
 - [ ] **Step 4: 增加 Review Focus 负向断言并运行测试**
 
-测试必须额外拒绝：监听 80/443、模板固定公网监听而没有 `__LISTEN_ADDRESS__`、无条件 Origin 改写、代理 Authorization、API 缺失安全头、缺少 `Persistent=true`、无 expires-at 守卫、忽略 systemctl stop/disable 失败、清理失败后自删恢复组件、宽泛 `/etc/letsencrypt` 删除、未校验变量参与 `rm -rf`，以及模板内出现真实密码、会话令牌或私钥。
+测试必须额外拒绝：监听 80/443、模板固定公网监听而没有 `__LISTEN_ADDRESS__`、无条件 Origin 改写、代理 Authorization、请求缓冲仍开启、CSP 不允许 `data:` 音频、API 缺失安全头、缺少 `Persistent=true`、无 expires-at 守卫、忽略 systemctl stop/disable 失败、清理失败后自删恢复组件、宽泛 `/etc/letsencrypt` 删除、未校验变量参与 `rm -rf`，以及模板内出现真实密码、会话令牌或私钥。
 
 Run: `.venv/Scripts/python.exe -m pytest tests/test_temp_ip_deployment_contract.py -q`，随后 `.venv/Scripts/python.exe -m pytest tests -q`（工作目录 `backend`）
 
