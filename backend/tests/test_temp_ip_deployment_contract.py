@@ -48,13 +48,17 @@ def test_nginx_enforces_tls_auth_streaming_and_origin_contract() -> None:
     assert "proxy_read_timeout 180s;" in config
     assert "proxy_send_timeout 180s;" in config
     assert "proxy_buffering off;" in config
+    assert "proxy_request_buffering off;" in config
     assert "proxy_cache off;" in config
     assert "proxy_set_header Origin https://luna.shipmaster.asia;" in config
     assert 'proxy_set_header Authorization "";' in config
     assert "proxy_set_header X-Session-Token $http_x_session_token;" in config
     assert "access_log off;" in config
+    assert 'map $http_origin $luna_exact_origin_allowed {' in config
     assert '"https://__PUBLIC_IP__:8443" 1;' in config
-    assert '"" 1;' in config
+    assert 'map "$request_method|$http_origin" $luna_empty_read_allowed {' in config
+    assert '"~^(GET|HEAD|OPTIONS)\\|$" 1;' in config
+    assert 'map "$luna_exact_origin_allowed|$luna_empty_read_allowed"' in config
     assert "same-origin 1;" in config
     assert "none 1;" in config
     assert "if ($luna_origin_allowed = 0)" in config
@@ -69,6 +73,7 @@ def test_nginx_enforces_tls_auth_streaming_and_origin_contract() -> None:
         "Content-Security-Policy",
     ):
         assert config.count(header) >= 2
+    assert config.count("media-src 'self' blob: data:") >= 2
 
 
 def test_expiry_guard_rejects_missing_invalid_or_elapsed_deadline() -> None:
@@ -77,6 +82,10 @@ def test_expiry_guard_rejects_missing_invalid_or_elapsed_deadline() -> None:
     assert 'EXPIRY_FILE="/var/lib/luna-temp-edge/expires-at"' in script
     assert '-f "${EXPIRY_FILE}"' in script
     assert "date -u --date=" in script
+    assert "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" in script
+    assert 'stat -c "%u:%a"' in script
+    assert '"0:600"' in script
+    assert ".test-security" in script
     assert "expiry_epoch" in script
     assert "now_epoch" in script
     assert "expiry_epoch <= now_epoch" in script
@@ -141,21 +150,33 @@ def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
     auth_remove_at = script.index("/etc/luna-temp-edge/htpasswd")
     assert stop_at < disable_at < listen_check_at < auth_remove_at
 
-    assert 'systemctl stop "${unit}"' in script
-    assert 'systemctl disable "${unit}"' in script
-    assert 'systemctl is-active "${unit}"' in script
-    assert 'systemctl is-enabled "${unit}"' in script
-    assert 'systemctl stop "${unit}"' + " || true" not in script
-    assert 'systemctl disable "${unit}"' + " || true" not in script
+    assert '"${SYSTEMCTL_BIN}" stop "${unit}"' in script
+    assert '"${SYSTEMCTL_BIN}" disable "${unit}"' in script
+    assert '"${SYSTEMCTL_BIN}" is-active "${unit}"' in script
+    assert '"${SYSTEMCTL_BIN}" is-enabled "${unit}"' in script
+    assert '"${SYSTEMCTL_BIN}" stop "${unit}"' + " || true" not in script
+    assert '"${SYSTEMCTL_BIN}" disable "${unit}"' + " || true" not in script
     assert "for attempt in 1 2 3" in script
-    assert "ensure_unit_inactive luna-temp-edge-failsafe.timer" in script
-    assert "ensure_unit_disabled luna-temp-edge-failsafe.timer" in script
-    assert "ensure_unit_inactive luna-temp-edge-expiry.timer" in script
-    assert "ensure_unit_disabled luna-temp-edge-expiry.timer" in script
+    failsafe_stop_at = script.index("ensure_unit_inactive luna-temp-edge-failsafe.timer")
+    expiry_stop_at = script.index("ensure_unit_inactive luna-temp-edge-expiry.timer")
     assert 'UFW_OWNERSHIP_FILE="${ROOT_PREFIX}/var/lib/luna-temp-edge/ufw-rule-owned"' in script
     ownership_at = script.index('[[ -f "${UFW_OWNERSHIP_FILE}" ]]')
-    ufw_delete_at = script.index("ufw --force delete allow 8443/tcp")
+    ufw_delete_at = script.index('"${UFW_BIN}" --force delete allow 8443/tcp')
     assert ownership_at < ufw_delete_at < stop_at
+    failure_gate = script.index('if [[ "${failures}" -ne 0 ]]')
+    assert failure_gate < failsafe_stop_at
+    assert failure_gate < expiry_stop_at
+    assert 'status_output="$("${UFW_BIN}" status' in script
+    assert "invalid UFW ownership record" in script
+
+    for variable in (
+        "LUNA_TEMP_EDGE_SYSTEMCTL_BIN",
+        "LUNA_TEMP_EDGE_SS_BIN",
+        "LUNA_TEMP_EDGE_UFW_BIN",
+        "LUNA_TEMP_EDGE_SLEEP_BIN",
+        "LUNA_TEMP_EDGE_CERTBOT_BIN",
+    ):
+        assert variable in script
 
     assert "luna-temp-edge-v2.3.2" in script
     assert "luna-temp-ip-49-234-57-214" in script
@@ -175,7 +196,6 @@ def test_cleanup_is_fixed_scope_stop_first_and_idempotent() -> None:
     assert not re.search(r"rm\s+-rf\s+(?:--\s+)?\$(?!\{ROOT_PREFIX\})", script)
     assert "systemctl stop --all" not in script
     assert "ufw reset" not in script
-    failure_gate = script.index('if [[ "${failures}" -ne 0 ]]')
     assert failure_gate < script.index(
         'remove_file "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge/cleanup.sh"'
     )

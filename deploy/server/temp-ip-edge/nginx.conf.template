@@ -23,10 +23,21 @@ http {
     limit_req_zone $binary_remote_addr zone=luna_temp_api:1m rate=10r/s;
     limit_conn_zone $binary_remote_addr zone=luna_temp_conn:1m;
 
-    map $http_origin $luna_origin_allowed {
+    map $http_origin $luna_exact_origin_allowed {
         default 0;
-        "" 1;
         "https://__PUBLIC_IP__:8443" 1;
+    }
+
+    map "$request_method|$http_origin" $luna_empty_read_allowed {
+        default 0;
+        "~^(GET|HEAD|OPTIONS)\|$" 1;
+    }
+
+    map "$luna_exact_origin_allowed|$luna_empty_read_allowed" $luna_origin_allowed {
+        default 0;
+        "1|0" 1;
+        "1|1" 1;
+        "0|1" 1;
     }
 
     map $http_sec_fetch_site $luna_fetch_site_allowed {
@@ -60,7 +71,7 @@ http {
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "no-referrer" always;
         add_header Permissions-Policy "microphone=(self)" always;
-        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; media-src 'self' blob: data:; connect-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
 
         location /api/ {
             limit_req zone=luna_temp_api burst=20 nodelay;
@@ -84,6 +95,7 @@ http {
             proxy_set_header Connection "";
 
             proxy_buffering off;
+            proxy_request_buffering off;
             proxy_cache off;
             proxy_read_timeout 180s;
             proxy_send_timeout 180s;
@@ -93,7 +105,7 @@ http {
             add_header X-Frame-Options "DENY" always;
             add_header Referrer-Policy "no-referrer" always;
             add_header Permissions-Policy "microphone=(self)" always;
-            add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
+            add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; media-src 'self' blob: data:; connect-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
             add_header Cache-Control "no-store" always;
         }
 

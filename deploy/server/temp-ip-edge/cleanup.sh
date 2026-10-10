@@ -5,15 +5,40 @@ set -uo pipefail
 PROJECT_MARKER="luna-temp-edge-v2.3.2"
 CERT_NAME="luna-temp-ip-49-234-57-214"
 ROOT_PREFIX="${LUNA_TEMP_EDGE_TEST_ROOT:-}"
-CERTBOT_BIN="${CERTBOT_BIN:-/snap/bin/certbot}"
 failures=0
+
+require_test_binary() {
+    local variable_name="$1"
+    local value
+    local resolved
+
+    if [[ ! -v "${variable_name}" ]]; then
+        printf '%s\n' "Missing required test command: ${variable_name}" >&2
+        return 1
+    fi
+    value="${!variable_name}"
+    if [[ -z "${value}" || ! -x "${value}" || -L "${value}" ]]; then
+        printf '%s\n' "Unsafe test command: ${variable_name}" >&2
+        return 1
+    fi
+    resolved="$(readlink -f -- "${value}")"
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+    case "${resolved}" in
+        "${ROOT_PREFIX}"/mock-bin/*) printf '%s\n' "${resolved}" ;;
+        *)
+            printf '%s\n' "Test command escapes the isolated root: ${variable_name}" >&2
+            return 1
+            ;;
+    esac
+}
 
 if [[ -n "${ROOT_PREFIX}" ]]; then
     if [[ ! -d "${ROOT_PREFIX}" || -L "${ROOT_PREFIX}" ]]; then
         printf '%s\n' "Test root must be an existing non-symlink directory" >&2
         exit 64
     fi
-
     resolved_root="$(readlink -f -- "${ROOT_PREFIX}")"
     if [[ $? -ne 0 || -z "${resolved_root}" ]]; then
         printf '%s\n' "Test root could not be resolved" >&2
@@ -28,6 +53,19 @@ if [[ -n "${ROOT_PREFIX}" ]]; then
             ;;
     esac
 
+    if ! SYSTEMCTL_BIN="$(require_test_binary LUNA_TEMP_EDGE_SYSTEMCTL_BIN)" \
+        || ! SS_BIN="$(require_test_binary LUNA_TEMP_EDGE_SS_BIN)" \
+        || ! UFW_BIN="$(require_test_binary LUNA_TEMP_EDGE_UFW_BIN)" \
+        || ! SLEEP_BIN="$(require_test_binary LUNA_TEMP_EDGE_SLEEP_BIN)" \
+        || ! CERTBOT_BIN="$(require_test_binary LUNA_TEMP_EDGE_CERTBOT_BIN)"; then
+        exit 64
+    fi
+else
+    SYSTEMCTL_BIN="/usr/bin/systemctl"
+    SS_BIN="/usr/bin/ss"
+    UFW_BIN="/usr/sbin/ufw"
+    SLEEP_BIN="/usr/bin/sleep"
+    CERTBOT_BIN="/snap/bin/certbot"
 fi
 
 UFW_OWNERSHIP_FILE="${ROOT_PREFIX}/var/lib/luna-temp-edge/ufw-rule-owned"
@@ -39,7 +77,7 @@ record() {
 }
 
 unit_load_state() {
-    systemctl show --property=LoadState --value "$1" 2>/dev/null
+    "${SYSTEMCTL_BIN}" show --property=LoadState --value "$1" 2>/dev/null
 }
 
 ensure_unit_inactive() {
@@ -57,11 +95,11 @@ ensure_unit_inactive() {
         return 0
     fi
 
-    systemctl is-active "${unit}" >/dev/null 2>&1
+    "${SYSTEMCTL_BIN}" is-active "${unit}" >/dev/null 2>&1
     status=$?
     case "${status}" in
         0)
-            if ! systemctl stop "${unit}" >/dev/null 2>&1; then
+            if ! "${SYSTEMCTL_BIN}" stop "${unit}" >/dev/null 2>&1; then
                 record "ERROR failed to stop a temporary edge unit"
                 return 1
             fi
@@ -73,7 +111,7 @@ ensure_unit_inactive() {
             ;;
     esac
 
-    systemctl is-active "${unit}" >/dev/null 2>&1
+    "${SYSTEMCTL_BIN}" is-active "${unit}" >/dev/null 2>&1
     status=$?
     case "${status}" in
         3|4) return 0 ;;
@@ -88,11 +126,9 @@ ensure_unit_disabled() {
     local unit="$1"
     local load_state
     local enabled_state
-    local status
 
     load_state="$(unit_load_state "${unit}")"
-    status=$?
-    if [[ "${status}" -ne 0 ]]; then
+    if [[ $? -ne 0 ]]; then
         record "ERROR unable to inspect unit load state"
         return 1
     fi
@@ -100,11 +136,10 @@ ensure_unit_disabled() {
         return 0
     fi
 
-    enabled_state="$(systemctl is-enabled "${unit}" 2>/dev/null)"
-    status=$?
+    enabled_state="$("${SYSTEMCTL_BIN}" is-enabled "${unit}" 2>/dev/null)"
     case "${enabled_state}" in
         enabled|enabled-runtime|linked|linked-runtime|alias)
-            if ! systemctl disable "${unit}" >/dev/null 2>&1; then
+            if ! "${SYSTEMCTL_BIN}" disable "${unit}" >/dev/null 2>&1; then
                 record "ERROR failed to disable a temporary edge unit"
                 return 1
             fi
@@ -116,8 +151,7 @@ ensure_unit_disabled() {
             ;;
     esac
 
-    enabled_state="$(systemctl is-enabled "${unit}" 2>/dev/null)"
-    status=$?
+    enabled_state="$("${SYSTEMCTL_BIN}" is-enabled "${unit}" 2>/dev/null)"
     case "${enabled_state}" in
         disabled|static|indirect|masked|masked-runtime|generated|transient) return 0 ;;
         *)
@@ -130,12 +164,10 @@ ensure_unit_disabled() {
 verify_port_closed_three_times() {
     local attempt
     local listeners
-    local status
 
     for attempt in 1 2 3; do
-        listeners="$(ss -ltnH 'sport = :8443' 2>/dev/null)"
-        status=$?
-        if [[ "${status}" -ne 0 ]]; then
+        listeners="$("${SS_BIN}" -ltnH 'sport = :8443' 2>/dev/null)"
+        if [[ $? -ne 0 ]]; then
             record "ERROR unable to verify port 8443"
             return 1
         fi
@@ -144,7 +176,11 @@ verify_port_closed_three_times() {
             return 1
         fi
         if [[ "${attempt}" -lt 3 ]]; then
-            sleep 1
+            "${SLEEP_BIN}" 1
+            if [[ $? -ne 0 ]]; then
+                record "ERROR port verification delay failed"
+                return 1
+            fi
         fi
     done
 }
@@ -158,24 +194,27 @@ remove_file() {
 
 record "cleanup started"
 
-# Revoke the deployment-owned host firewall opening before stopping the listener.
+# Revoke only a firewall rule that this deployment explicitly recorded as owned.
 if [[ -f "${UFW_OWNERSHIP_FILE}" ]]; then
     ownership="$(<"${UFW_OWNERSHIP_FILE}")"
     if [[ "${ownership}" != "${PROJECT_MARKER}" ]]; then
         record "ERROR invalid UFW ownership record"
-        failures=1
-    elif ! command -v ufw >/dev/null 2>&1; then
-        record "ERROR UFW ownership exists but UFW is unavailable"
-        failures=1
-    elif ufw status 2>/dev/null | grep -Fq "${PROJECT_MARKER}"; then
-        if ! ufw --force delete allow 8443/tcp comment "${PROJECT_MARKER}" >/dev/null 2>&1; then
+        exit 1
+    fi
+    status_output="$("${UFW_BIN}" status 2>/dev/null)"
+    if [[ $? -ne 0 ]]; then
+        record "ERROR unable to inspect the owned UFW rule"
+        exit 1
+    fi
+    if grep -Fq "${PROJECT_MARKER}" <<<"${status_output}"; then
+        if ! "${UFW_BIN}" --force delete allow 8443/tcp comment "${PROJECT_MARKER}" >/dev/null 2>&1; then
             record "ERROR failed to remove the owned UFW rule"
-            failures=1
-        else
-            remove_file "${UFW_OWNERSHIP_FILE}"
+            exit 1
         fi
-    else
-        remove_file "${UFW_OWNERSHIP_FILE}"
+    fi
+    remove_file "${UFW_OWNERSHIP_FILE}"
+    if [[ "${failures}" -ne 0 ]]; then
+        exit 1
     fi
 fi
 
@@ -184,32 +223,13 @@ ensure_unit_inactive luna-temp-edge.service
 if [[ $? -ne 0 ]]; then
     exit 1
 fi
-
 ensure_unit_disabled luna-temp-edge.service
 if [[ $? -ne 0 ]]; then
     exit 1
 fi
-
 verify_port_closed_three_times
 if [[ $? -ne 0 ]]; then
     printf '%s\n' "Port 8443 shutdown could not be proven" >&2
-    exit 1
-fi
-
-ensure_unit_inactive luna-temp-edge-failsafe.timer
-if [[ $? -ne 0 ]]; then
-    exit 1
-fi
-ensure_unit_disabled luna-temp-edge-failsafe.timer
-if [[ $? -ne 0 ]]; then
-    exit 1
-fi
-ensure_unit_inactive luna-temp-edge-expiry.timer
-if [[ $? -ne 0 ]]; then
-    exit 1
-fi
-ensure_unit_disabled luna-temp-edge-expiry.timer
-if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
@@ -242,6 +262,7 @@ if ! rm -rf -- "${ROOT_PREFIX}/var/log/luna-temp-edge"; then
     failures=1
 fi
 remove_file "${ROOT_PREFIX}/var/lib/luna-temp-edge/expires-at"
+remove_file "${ROOT_PREFIX}/var/lib/luna-temp-edge/expires-at.test-security"
 remove_file "${ROOT_PREFIX}/etc/luna-temp-edge/nginx.conf"
 remove_file "${ROOT_PREFIX}/etc/luna-temp-edge/tls/fullchain.pem"
 remove_file "${ROOT_PREFIX}/etc/luna-temp-edge/tls/privkey.pem"
@@ -249,9 +270,26 @@ rmdir -- "${ROOT_PREFIX}/etc/luna-temp-edge/tls" 2>/dev/null || true
 rmdir -- "${ROOT_PREFIX}/var/lib/luna-temp-edge" 2>/dev/null || true
 rmdir -- "${ROOT_PREFIX}/etc/luna-temp-edge" 2>/dev/null || true
 
-# Failure keeps the cleanup program and units installed so Restart=on-failure can retry.
+# Any failed certificate or file cleanup keeps both persistent timers for retry.
 if [[ "${failures}" -ne 0 ]]; then
-    record "cleanup finished with warnings; retry assets retained"
+    record "cleanup finished with warnings; timers and retry assets retained"
+    exit 1
+fi
+
+ensure_unit_inactive luna-temp-edge-failsafe.timer
+if [[ $? -ne 0 ]]; then
+    exit 1
+fi
+ensure_unit_disabled luna-temp-edge-failsafe.timer
+if [[ $? -ne 0 ]]; then
+    exit 1
+fi
+ensure_unit_inactive luna-temp-edge-expiry.timer
+if [[ $? -ne 0 ]]; then
+    exit 1
+fi
+ensure_unit_disabled luna-temp-edge-expiry.timer
+if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
@@ -259,17 +297,16 @@ remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge.service"
 remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-expiry.service"
 remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-expiry.timer"
 remove_file "${ROOT_PREFIX}/etc/systemd/system/luna-temp-edge-failsafe.timer"
-
 if [[ "${failures}" -ne 0 ]]; then
     record "cleanup could not remove all units; retry assets retained"
     exit 1
 fi
 
-if ! systemctl daemon-reload >/dev/null 2>&1; then
+if ! "${SYSTEMCTL_BIN}" daemon-reload >/dev/null 2>&1; then
     record "ERROR systemd daemon reload failed; retry assets retained"
     exit 1
 fi
-systemctl reset-failed luna-temp-edge.service luna-temp-edge-expiry.service >/dev/null 2>&1 || true
+"${SYSTEMCTL_BIN}" reset-failed luna-temp-edge.service luna-temp-edge-expiry.service >/dev/null 2>&1 || true
 
 record "cleanup completed"
 remove_file "${ROOT_PREFIX}/usr/local/lib/luna-temp-edge/check-expiry.sh"
